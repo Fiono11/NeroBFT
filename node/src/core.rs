@@ -1,8 +1,8 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 // Copyright(C) Facebook, Inc. and its affiliates.
 use bytes::Bytes;
 //#[cfg(feature = "benchmark")]
-use crypto::{Digest, Signature};
+use crypto::{Digest, Signature, SignatureService};
 use crypto::PublicKey;
 //#[cfg(feature = "benchmark")]
 use ed25519_dalek::{Digest as _, Sha512};
@@ -15,7 +15,9 @@ use std::net::SocketAddr;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::{sleep, Duration, Instant};
 use config::{Authority, Committee, Stake};
-use crate::messages::{Batch, Transaction};
+use crate::messages::{Batch, Transaction, Vote};
+use std::convert::TryFrom;
+use store::Store;
 
 //#[cfg(test)]
 //#[path = "tests/batch_maker_tests.rs"]
@@ -23,6 +25,12 @@ use crate::messages::{Batch, Transaction};
 
 /// Assemble clients transactions into batches.
 pub struct Core {
+    /// The public key of this primary.
+    name: PublicKey,
+    /// Service to sign votes.
+    signature_service: SignatureService,
+    /// Committee
+    committee: Committee,
     /// The preferred batch size (in bytes).
     batch_size: usize,
     /// The maximum delay after which to seal the batch (in ms).
@@ -38,11 +46,14 @@ pub struct Core {
     /// A network sender to broadcast the batches to the other workers.
     network: ReliableSender,
     /// Election container
-    elections: HashMap<Digest, Committee>,
+    elections: HashMap<Digest, (Committee, Digest)>,
 }
 
 impl Core {
     pub fn spawn(
+        name: PublicKey,
+        signature_service: SignatureService,
+        committee: Committee,
         batch_size: usize,
         max_batch_delay: u64,
         rx_transaction: Receiver<Transaction>,
@@ -50,6 +61,9 @@ impl Core {
     ) {
         tokio::spawn(async move {
             Self {
+                name,
+                signature_service,
+                committee,
                 batch_size,
                 max_batch_delay,
                 rx_transaction,
@@ -73,8 +87,54 @@ impl Core {
             tokio::select! {
                 // Assemble client transactions into batches of preset size.
                 Some(transaction) = self.rx_transaction.recv() => {
+                    // verify timestamp
+                    // verify payload
 
-                    self.current_batch_size += transaction.clone().payload.len();
+                    let mut votes = transaction.votes();
+                    let payload = &transaction.payload();
+                    let digest = Digest::try_from(&payload[..]).unwrap();
+                    let parent = &transaction.parent();
+
+                    let mut tx = Transaction {
+                        payload: vec![],
+                        parent: Digest::default(),
+                        votes: BTreeSet::new(),
+                    };
+
+                    // first time this transaction is seen
+                    if !self.elections.contains_key(&parent) {
+
+                        // tally votes of the transaction
+                        let mut committee = self.committee.clone();
+                        for vote in &votes {
+                            if !committee.authorities.contains_key(&vote.author) {
+                                // verify signature
+                                vote.verify(&self.committee);
+                                // add vote
+                                committee.authorities.insert(vote.author, Authority::new(committee.stake(&vote.author), committee.primary(&vote.author).unwrap()));
+                            }
+                        }
+
+                        // tally own vote
+                        let own_vote = Vote::new(digest.clone(), &self.name, &mut self.signature_service);
+                        votes.insert(own_vote.await);
+
+                        self.elections.insert(parent.clone(), (committee, digest.clone()));
+                    }
+                    else {
+                        // check fork
+                        let (c, d) = self.elections.get(&parent).unwrap();
+                        if d != &digest {
+                            break;
+                        }
+                        else {
+                            // check that all votes of the transaction are already tallied
+                        }
+                    }
+
+                    // check quorum
+
+                    self.current_batch_size += payload.len();
                     self.current_batch.push(transaction);
                     if self.current_batch_size >= self.batch_size {
                         self.seal().await;

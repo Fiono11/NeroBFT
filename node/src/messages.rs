@@ -13,7 +13,22 @@ pub type Batch = Vec<Transaction>;
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Transaction {
     pub payload: Vec<u8>,
+    pub parent: Digest,
     pub votes: BTreeSet<Vote>,
+}
+
+impl Transaction {
+    pub fn payload(&self) -> Vec<u8> {
+        self.payload.clone()
+    }
+
+    pub fn parent(&self) -> Digest {
+        self.parent.clone()
+    }
+
+    pub fn votes(&self) -> BTreeSet<Vote>{
+        self.votes.clone()
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq)]

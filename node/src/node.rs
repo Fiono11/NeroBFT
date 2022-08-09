@@ -1,13 +1,14 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 use async_trait::async_trait;
 use bytes::Bytes;
-use config::{Committee, Parameters};
-use crypto::{Digest, PublicKey};
+use config::{Committee, Parameters, KeyPair};
+use crypto::{Digest, PublicKey, SignatureService};
 use futures::sink::SinkExt as _;
 use log::{error, info, warn};
 use network::{MessageHandler, Receiver, Writer};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
+use ed25519_dalek::Keypair;
 use store::Store;
 use tokio::sync::mpsc::{channel, Sender};
 use crate::core::Core;
@@ -21,8 +22,8 @@ use crate::messages::{Batch, Transaction};
 pub const CHANNEL_CAPACITY: usize = 1_000;
 
 pub struct Primary {
-    /// The public key of this authority.
-    name: PublicKey,
+    /// The keypair of this authority.
+    keypair: KeyPair,
     /// The committee information.
     committee: Committee,
     /// The configuration parameters.
@@ -33,14 +34,14 @@ pub struct Primary {
 
 impl Primary {
     pub fn spawn(
-        name: PublicKey,
+        keypair: KeyPair,
         committee: Committee,
         parameters: Parameters,
         store: Store,
     ) {
         // Define a worker instance.
         let primary = Self {
-            name,
+            keypair: keypair.clone(),
             committee: committee.clone(),
             parameters,
             store,
@@ -52,9 +53,9 @@ impl Primary {
         // NOTE: This log entry is used to compute performance.
         info!(
             "Primary {} successfully booted on {}",
-            name,
+            keypair.name.clone(),
             committee
-                .primary(&name)
+                .primary(&keypair.name)
                 .expect("Our public key or worker id is not in the committee")
                 .transactions
                 .ip()
@@ -68,7 +69,7 @@ impl Primary {
         // We first receive clients' transactions from the network.
         let mut address = self
             .committee
-            .primary(&self.name)
+            .primary(&self.keypair.name)
             .expect("Our public key is not in the committee")
             .transactions;
         address.set_ip("0.0.0.0".parse().unwrap());
@@ -77,15 +78,21 @@ impl Primary {
             /* handler */ TxReceiverHandler { tx_batch_maker },
         );
 
+        // The `SignatureService` is used to require signatures on specific digests.
+        let signature_service = SignatureService::new(self.keypair.secret.clone());
+
         // The transactions are sent to the `BatchMaker` that assembles them into batches. It then broadcasts
         // (in a reliable manner) the batches to all other workers that share the same `id` as us. Finally, it
         // gathers the 'cancel handlers' of the messages and send them to the `QuorumWaiter`.
         Core::spawn(
+            self.keypair.name.clone(),
+            signature_service,
+            self.committee.clone(),
             self.parameters.batch_size,
             self.parameters.max_batch_delay,
             /* rx_transaction */ rx_batch_maker,
             self.committee
-                .others_primaries(&self.name)
+                .others_primaries(&self.keypair.name)
                 .iter()
                 .map(|(name, addresses)| (*name, addresses.transactions))
                 .collect(),
@@ -93,7 +100,7 @@ impl Primary {
 
         info!(
             "Primary {} listening to client transactions on {}",
-            self.name, address
+            self.keypair.name, address
         );
     }
 }

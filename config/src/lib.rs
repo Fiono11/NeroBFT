@@ -94,6 +94,15 @@ pub struct Authority {
     pub primary: PrimaryAddresses,
 }
 
+impl Authority {
+    pub fn new(stake: Stake, primary: PrimaryAddresses) -> Self {
+        Self {
+            stake,
+            primary,
+        }
+    }
+}
+
 #[derive(Clone, Deserialize)]
 pub struct Committee {
     pub authorities: BTreeMap<PublicKey, Authority>,
@@ -155,7 +164,7 @@ impl Committee {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct KeyPair {
     /// The node's public key (and identifier).
     pub name: PublicKey,
