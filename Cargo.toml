@@ -1,0 +1,2 @@
+[workspace]
+members = ["config", "crypto", "network", "store", "node"]
