@@ -1,9 +1,8 @@
 use std::collections::{BTreeSet, HashMap};
 // Copyright(C) Facebook, Inc. and its affiliates.
-use crate::node::PrimaryMessage;
 use bytes::Bytes;
 //#[cfg(feature = "benchmark")]
-use crypto::Digest;
+use crypto::{Digest, Signature};
 use crypto::PublicKey;
 //#[cfg(feature = "benchmark")]
 use ed25519_dalek::{Digest as _, Sha512};
@@ -16,13 +15,11 @@ use std::net::SocketAddr;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::{sleep, Duration, Instant};
 use config::{Authority, Committee, Stake};
+use crate::messages::{Batch, Transaction};
 
 //#[cfg(test)]
 //#[path = "tests/batch_maker_tests.rs"]
 //pub mod batch_maker_tests;
-
-pub type Transaction = Vec<u8>;
-pub type Batch = Vec<Transaction>;
 
 /// Assemble clients transactions into batches.
 pub struct Core {
@@ -76,7 +73,8 @@ impl Core {
             tokio::select! {
                 // Assemble client transactions into batches of preset size.
                 Some(transaction) = self.rx_transaction.recv() => {
-                    self.current_batch_size += transaction.len();
+
+                    self.current_batch_size += transaction.clone().payload.len();
                     self.current_batch.push(transaction);
                     if self.current_batch_size >= self.batch_size {
                         self.seal().await;
@@ -115,8 +113,7 @@ impl Core {
         // Serialize the batch.
         self.current_batch_size = 0;
         let batch: Vec<_> = self.current_batch.drain(..).collect();
-        let message = PrimaryMessage::Batch(batch);
-        let serialized = bincode::serialize(&message).expect("Failed to serialize our own batch");
+        let serialized = bincode::serialize(&batch).expect("Failed to serialize our own batch");
 
         #[cfg(feature = "benchmark")]
         {

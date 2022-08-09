@@ -1,5 +1,4 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
-use crate::core::{Batch, Core, Transaction};
 use async_trait::async_trait;
 use bytes::Bytes;
 use config::{Committee, Parameters};
@@ -11,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use std::error::Error;
 use store::Store;
 use tokio::sync::mpsc::{channel, Sender};
+use crate::core::Core;
+use crate::messages::{Batch, Transaction};
 
 //#[cfg(test)]
 //#[path = "tests/worker_tests.rs"]
@@ -18,20 +19,6 @@ use tokio::sync::mpsc::{channel, Sender};
 
 /// The default channel capacity for each channel of the worker.
 pub const CHANNEL_CAPACITY: usize = 1_000;
-
-/// The primary round number.
-// TODO: Move to the primary.
-pub type Round = u64;
-
-/// Indicates a serialized `WorkerPrimaryMessage` message.
-pub type SerializedBatchDigestMessage = Vec<u8>;
-
-/// The message exchanged between workers.
-#[derive(Debug, Serialize, Deserialize)]
-pub enum PrimaryMessage {
-    Batch(Batch),
-    //BatchRequest(Vec<Digest>, /* origin */ PublicKey),
-}
 
 pub struct Primary {
     /// The public key of this authority.
@@ -59,9 +46,8 @@ impl Primary {
             store,
         };
 
-        // Spawn all worker tasks.
-        let (tx_primary, rx_primary) = channel(CHANNEL_CAPACITY);
-        primary.handle_transactions(tx_primary);
+        // Spawn all primary tasks.
+        primary.handle_transactions();
 
         // NOTE: This log entry is used to compute performance.
         info!(
@@ -76,7 +62,7 @@ impl Primary {
     }
 
     /// Spawn all tasks responsible to handle clients transactions.
-    fn handle_transactions(&self, tx_primary: Sender<SerializedBatchDigestMessage>) {
+    fn handle_transactions(&self) {
         let (tx_batch_maker, rx_batch_maker) = channel(CHANNEL_CAPACITY);
 
         // We first receive clients' transactions from the network.
@@ -122,13 +108,16 @@ struct TxReceiverHandler {
 impl MessageHandler for TxReceiverHandler {
     async fn dispatch(&self, _writer: &mut Writer, message: Bytes) -> Result<(), Box<dyn Error>> {
         // Send the transaction to the batch maker.
-        self.tx_batch_maker
-            .send(message.to_vec())
-            .await
-            .expect("Failed to send transaction");
+        match bincode::deserialize(&message) {
+            Ok(tx) => self.tx_batch_maker
+                .send(tx)
+                .await
+                .expect("Failed to send transaction"),
+            Err(e) => warn!("Serialization error: {}", e),
+        }
 
         // Give the change to schedule other tasks.
-        tokio::task::yield_now().await;
+        //tokio::task::yield_now().await;
         Ok(())
     }
 }
