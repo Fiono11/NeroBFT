@@ -80,13 +80,13 @@ impl Parameters {
     }
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Debug)]
 pub struct PrimaryAddresses {
     /// Address to receive client transactions (WAN).
     pub transactions: SocketAddr,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Debug)]
 pub struct Authority {
     /// The voting power of this authority.
     pub stake: Stake,
@@ -103,9 +103,17 @@ impl Authority {
     }
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Debug)]
 pub struct Committee {
     pub authorities: BTreeMap<PublicKey, Authority>,
+}
+
+impl Committee {
+    pub fn empty() -> Self {
+        Self {
+            authorities: BTreeMap::new(),
+        }
+    }
 }
 
 impl Import for Committee {}
@@ -119,6 +127,15 @@ impl Committee {
     /// Return the stake of a specific authority.
     pub fn stake(&self, name: &PublicKey) -> Stake {
         self.authorities.get(&name).map_or_else(|| 0, |x| x.stake)
+    }
+
+    /// Return the stake of the committee.
+    pub fn total_stake(&self) -> Stake {
+        let mut total_stake = 0;
+        for (_, authority) in &self.authorities {
+            total_stake += authority.stake;
+        }
+        total_stake
     }
 
     /// Returns the stake of all authorities except `myself`.

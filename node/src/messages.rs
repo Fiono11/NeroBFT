@@ -5,42 +5,60 @@ use ed25519_dalek::{Digest as _, Sha512};
 use config::Committee;
 use crypto::{Digest, Hash, PublicKey, Signature, SignatureService};
 use serde::{Deserialize, Serialize};
+use crate::elections::{BlockHash, ParentHash};
 use crate::ensure;
 use crate::error::{DagError, DagResult};
 
 pub type Batch = Vec<Transaction>;
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Debug, Hash, PartialEq, Default, Eq, Clone, Deserialize, Serialize, Ord, PartialOrd)]
+pub struct Payload(pub [u8; 32]);
+
+#[derive(Clone, Serialize, Deserialize, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Transaction {
-    pub payload: Vec<u8>,
-    pub parent: Digest,
+    pub timestamp: u64,
+    pub payload: Payload,
+    pub parent: ParentHash,
     pub votes: BTreeSet<Vote>,
 }
 
 impl Transaction {
-    pub fn payload(&self) -> Vec<u8> {
+    pub fn new() -> Self {
+        Self {
+            timestamp: 0,
+            payload: Payload([0; 32]),
+            parent: ParentHash(Digest::default()),
+            votes: BTreeSet::new(),
+        }
+    }
+
+    pub fn payload(&self) -> Payload {
         self.payload.clone()
     }
 
-    pub fn parent(&self) -> Digest {
+    pub fn parent(&self) -> ParentHash {
         self.parent.clone()
     }
 
     pub fn votes(&self) -> BTreeSet<Vote>{
         self.votes.clone()
     }
+
+    pub fn timestamp(&self) -> u64{
+        self.timestamp
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Vote {
-    pub id: Digest,
+    pub id: BlockHash,
     pub author: PublicKey,
     pub signature: Signature,
 }
 
 impl Vote {
     pub async fn new(
-        id: Digest,
+        id: BlockHash,
         author: &PublicKey,
         signature_service: &mut SignatureService,
     ) -> Self {
@@ -82,7 +100,7 @@ impl fmt::Debug for Vote {
             "{}: ({}, {})",
             self.digest(),
             self.author,
-            self.id
+            self.id.0
         )
     }
 }

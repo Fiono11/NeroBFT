@@ -21,7 +21,7 @@ use crate::messages::{Batch, Transaction};
 /// The default channel capacity for each channel of the worker.
 pub const CHANNEL_CAPACITY: usize = 1_000;
 
-pub struct Primary {
+pub struct Node {
     /// The keypair of this authority.
     keypair: KeyPair,
     /// The committee information.
@@ -32,7 +32,7 @@ pub struct Primary {
     store: Store,
 }
 
-impl Primary {
+impl Node {
     pub fn spawn(
         keypair: KeyPair,
         committee: Committee,

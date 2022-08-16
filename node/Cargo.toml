@@ -1,5 +1,5 @@
 [package]
-name = "worker"
+name = "node"
 version = "0.1.0"
 authors = ["Alberto Sonnino <asonnino@fb.com>"]
 edition = "2018"

@@ -17,7 +17,9 @@ use tokio::time::{sleep, Duration, Instant};
 use config::{Authority, Committee, Stake};
 use crate::messages::{Batch, Transaction, Vote};
 use std::convert::TryFrom;
+use std::time::{SystemTime, UNIX_EPOCH};
 use store::Store;
+use crate::elections::{BlockHash, Election, ParentHash};
 
 //#[cfg(test)]
 //#[path = "tests/batch_maker_tests.rs"]
@@ -46,7 +48,11 @@ pub struct Core {
     /// A network sender to broadcast the batches to the other workers.
     network: ReliableSender,
     /// Election container
-    elections: HashMap<Digest, (Committee, Digest)>,
+    elections: Election,
+    /// Confirmed txs
+    confirmed_txs: BTreeSet<Transaction>,
+    /// Network delay
+    network_delay: u64,
 }
 
 impl Core {
@@ -72,6 +78,8 @@ impl Core {
                 current_batch_size: 0,
                 network: ReliableSender::new(),
                 elections: HashMap::new(),
+                confirmed_txs: BTreeSet::new(),
+                network_delay: 0,
             }
             .run()
             .await;
@@ -88,24 +96,30 @@ impl Core {
                 // Assemble client transactions into batches of preset size.
                 Some(transaction) = self.rx_transaction.recv() => {
                     // verify timestamp
+                    if now() > transaction.timestamp() + self.network_delay ||
+                        now() < transaction.timestamp() - self.network_delay {
+                            break;
+                    }
+
                     // verify payload
 
                     let mut votes = transaction.votes();
                     let payload = &transaction.payload();
-                    let digest = Digest::try_from(&payload[..]).unwrap();
-                    let parent = &transaction.parent();
+                    let digest = BlockHash(Digest::try_from(&payload.0[..]).unwrap());
+                    let parent = transaction.parent();
+                    let mut committee = Committee::empty();
 
                     let mut tx = Transaction {
-                        payload: vec![],
-                        parent: Digest::default(),
-                        votes: BTreeSet::new(),
+                        timestamp: transaction.timestamp,
+                        payload: payload.clone(),
+                        parent: parent.clone(),
+                        votes: votes.clone(),
                     };
 
                     // first time this transaction is seen
                     if !self.elections.contains_key(&parent) {
 
                         // tally votes of the transaction
-                        let mut committee = self.committee.clone();
                         for vote in &votes {
                             if !committee.authorities.contains_key(&vote.author) {
                                 // verify signature
@@ -116,10 +130,11 @@ impl Core {
                         }
 
                         // tally own vote
-                        let own_vote = Vote::new(digest.clone(), &self.name, &mut self.signature_service);
-                        votes.insert(own_vote.await);
+                        let own_vote = Vote::new(digest.clone(), &self.name, &mut self.signature_service).await;
 
-                        self.elections.insert(parent.clone(), (committee, digest.clone()));
+                        self.elections.insert(parent.clone(), (committee.clone(), digest.clone()));
+
+                        tx.votes.insert(own_vote);
                     }
                     else {
                         // check fork
@@ -129,13 +144,25 @@ impl Core {
                         }
                         else {
                             // check that all votes of the transaction are already tallied
+                            for vote in &votes {
+                                if !committee.authorities.contains_key(&vote.author) {
+                                    // verify signature
+                                    vote.verify(&self.committee);
+                                    // add vote
+                                    committee.authorities.insert(vote.author, Authority::new(committee.stake(&vote.author), committee.primary(&vote.author).unwrap()));
+                                }
+                            }
+                            self.elections.insert(parent.clone(), (committee.clone(), digest.clone()));
                         }
                     }
 
                     // check quorum
+                    if committee.total_stake() >= committee.quorum_threshold() {
+                        self.confirmed_txs.insert(transaction.clone());
+                    }
 
-                    self.current_batch_size += payload.len();
-                    self.current_batch.push(transaction);
+                    self.current_batch_size += payload.0.len();
+                    self.current_batch.push(tx);
                     if self.current_batch_size >= self.batch_size {
                         self.seal().await;
                         timer.as_mut().reset(Instant::now() + Duration::from_millis(self.max_batch_delay));
@@ -211,4 +238,14 @@ impl Core {
             .await
             .expect("Failed to deliver batch");*/
     }
+}
+
+pub fn now() -> u64 {
+    let start = SystemTime::now();
+    let since_the_epoch = start
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards");
+    let in_ms = since_the_epoch.as_secs() * 1000 +
+        since_the_epoch.subsec_nanos() as u64 / 1_000_000;
+    in_ms
 }
