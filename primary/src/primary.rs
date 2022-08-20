@@ -121,9 +121,9 @@ struct TxReceiverHandler {
 impl MessageHandler for TxReceiverHandler {
     async fn dispatch(&self, _writer: &mut Writer, message: Bytes) -> Result<(), Box<dyn Error>> {
         // Send the transaction to the batch maker.
-        match bincode::deserialize(&message) {
+        match bincode::deserialize::<Transaction>(&message) {
             Ok(tx) => {
-                info!("Tx received: {:#?}", tx);
+                info!("Received {:?}=", tx.digest());
                 self.tx_batch_maker
                     .send(tx)
                     .await

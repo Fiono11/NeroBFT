@@ -1,13 +1,17 @@
 # Copyright(C) Facebook, Inc. and its affiliates.
+import unittest
 from datetime import datetime
 from glob import glob
 from multiprocessing import Pool
 from os.path import join
-from re import findall, search
+from re import findall, search, split
 from statistics import mean
 from datetime import datetime
 
+import numpy
 from benchmark.utils import Print
+from six import assertCountEqual
+
 
 class ParseError(Exception):
     pass
@@ -41,23 +45,27 @@ class LogParser:
                 results = p.map(self._parse_primaries, primaries)
         except (ValueError, IndexError, AttributeError) as e:
             raise ParseError(f'Failed to parse nodes\' logs: {e}')
-        proposals, commits, self.configs, sizes, self.received_samples, primary_ips, l = zip(*results)
-        #self.commits = self._merge_results([x.items() for x in commits])
-        #self.first_receive = a
-        #self.commits = commits
-        #print ("commits: ", self.commits)
+        #commits = zip(*results)
 
-        self.proposals = self._merge_results([x.items() for x in proposals])
-        self.commits = self._merge_results([x.items() for x in commits])
+        print("results: ", results)
 
-        length = len(l)
+        l = numpy.array_split(results, len(primaries))
 
-        middle_index = length // len(primaries)
+        print(l[0][0])
+        print(l[1][0])
 
-        first_half = l[:middle_index]
-        second_half = l[middle_index:]
+        assert sorted(l[0][0]) == sorted(l[1][0])
 
-        assert first_half == second_half
+        self.commits = results
+
+        #length = len(self.commits)
+
+        #middle_index = length // len(primaries)
+
+        #first_half = l[:middle_index]
+        #second_half = l[middle_index:]
+
+        #assert first_half == second_half
 
         #self.proposals = self._merge_results([x.items() for x in proposals])
         #self.commits = self._merge_results([x.items() for x in commits])
@@ -65,8 +73,8 @@ class LogParser:
             #k: v for x in sizes for k, v in x.items() if k in self.commits
         #}
 
-        self.sizes = len(commits[0])
-        print("sized: ", self.sizes)
+        #self.sizes = len(commits[0])
+        #print("sized: ", self.sizes)
 
         # Check whether clients missed their target rate.
         if self.misses != 0:
@@ -110,73 +118,13 @@ class LogParser:
         if search(r'(?:panicked|Error)', log) is not None:
             raise ParseError('Primary(s) panicked')
 
-        tmp = findall(r'\[(.*Z) .* Received KeyImage\([^ ]+\) -> ([^ ]+=)', log)
-        tmp = [(d, self._to_posix(t)) for t, d in tmp]
-        proposals = self._merge_results([tmp])
-        print("proposals: ", proposals)
+        tmp1 = findall(r'\[(.*Z) .* Committed ParentHash\([^ ]+\) -> ([^ ]+=)', log)
+        tmp2 = [t for d, t in tmp1]
+        commits = tmp2
+        #commits = self._merge_results([tmp2])
+        print("commits: ", tmp2)
 
-        tmp1 = findall(r'\[(.*Z) .* Committed KeyImage\([^ ]+\) -> ([^ ]+=)', log)
-        tmp1 = [(d, self._to_posix(t)) for t, d in tmp1]
-        commits = self._merge_results([tmp1])
-        print("commits: ", commits)
-
-        #tmp3 = findall(r'\[(.*Z) .* Committed (.*)', log)
-        #tmp4 = [(d, self._to_posix(t)) for t, d in tmp3]
-        #commits = tmp4
-
-        #first_receive = findall(r'\[(.*Z) .* Received (.*)', log)
-        #a = [(d, self._to_posix(t)) for t, d in first_receive]
-        #print(a[0])
-
-        tmp1 = findall(r'\[(.*Z) .* TXOUTS: TxOut {\s*.* masked_amount: MaskedAmount {\s*.* twisted_elgamal: TwistedElGamal {\s* c1: (.*)', log)
-        #tmp2 = [(d, self._to_posix(t)) for t, d in tmp1]
-
-        tmp5 = findall(r'\[(.*Z) .* TXOUTS: TxOut {\s*.* masked_amount: MaskedAmount {\s*.* twisted_elgamal: TwistedElGamal {\s* c1: .*\s* c2: (.*)', log)
-        #tmp6 = [(d, self._to_posix(t)) for t, d in tmp5]
-
-        tmp7 = findall(r'\[(.*Z) .* TXOUTS: TxOut {\s*.* masked_amount: MaskedAmount {\s*.* twisted_elgamal: TwistedElGamal {\s* c1: .*\s* c2: .*\s* },.*\s* masked_value: (.*)', log)
-        #tmp8 = [(d, self._to_posix(t)) for t, d in tmp7]
-
-        tmp9 = findall(r'\[(.*Z) .* TXOUTS: TxOut {\s*.* masked_amount: MaskedAmount {\s*.* twisted_elgamal: TwistedElGamal {\s* c1: .*\s* c2: .*\s* },.*\s* masked_value: .*\s*},.*\s* target_key: (.*)', log)
-        #tmp10 = [(d, self._to_posix(t)) for t, d in tmp9]
-
-        tmp10 = findall(r'\[(.*Z) .* TXOUTS: TxOut {\s*.* masked_amount: MaskedAmount {\s*.* twisted_elgamal: TwistedElGamal {\s* c1: .*\s* c2: .*\s* },.*\s* masked_value: .*\s*},.*\s* target_key: .*\s* public_key: (.*)', log)
-
-        l = list()
-
-        for t, d in tmp10:
-            #print ("TMP1: ", d)
-            l.append(d)
-
-        #print ("TMP2: ", tmp2)
-        #print ("TXOUTS: ", commits1)
-
-        configs = {
-            'sync_retry_delay': int(
-                search(r'Sync retry delay .* (\d+)', log).group(1)
-            ),
-            'sync_retry_nodes': int(
-                search(r'Sync retry nodes .* (\d+)', log).group(1)
-            ),
-            'batch_size': int(
-                search(r'Batch size .* (\d+)', log).group(1)
-            ),
-            'max_batch_delay': int(
-                search(r'Max batch delay .* (\d+)', log).group(1)
-            ),
-        }
-
-        ip = search(r'booted on (\d+.\d+.\d+.\d+)', log).group(1)
-
-        tmp = findall(r'Batch ([^ ]+) contains (\d+) B', log)
-        sizes = {d: int(s) for d, s in tmp}
-
-        tmp = findall(r'Batch ([^ ]+) contains sample tx (\d+)', log)
-        samples = {int(s): d for d, s in tmp}
-
-        #print("commits: ", commits)
-
-        return proposals, commits, configs, sizes, samples, ip, l
+        return commits
 
     def _to_posix(self, string):
         x = datetime.fromisoformat(string.replace('Z', '+00:00'))
@@ -207,14 +155,15 @@ class LogParser:
     def _consensus_throughput(self):
         if not self.commits:
             return 0, 0, 0
-        start, end = min(self.proposals.values()), max(self.commits.values())
+        #start, end = 0, max(self.commits.values())
+        start, end = 0, 10
         duration = end - start
         print("duration: ", duration)
         #bytes = self.sizes
         #print("bytes: ", bytes)
         #bps = bytes / duration
         #tps = bps / self.size[0]
-        tps = self.sizes / duration
+        tps = len(self.commits) / duration
         return tps, tps, duration
 
     def _consensus_latency(self):
@@ -246,15 +195,15 @@ class LogParser:
         return mean(latency) if latency else 0
 
     def result(self):
-        sync_retry_delay = self.configs[0]['sync_retry_delay']
-        sync_retry_nodes = self.configs[0]['sync_retry_nodes']
-        batch_size = self.configs[0]['batch_size']
-        max_batch_delay = self.configs[0]['max_batch_delay']
+        #sync_retry_delay = self.configs[0]['sync_retry_delay']
+        #sync_retry_nodes = self.configs[0]['sync_retry_nodes']
+        #batch_size = self.configs[0]['batch_size']
+        #max_batch_delay = self.configs[0]['max_batch_delay']
 
         #consensus_latency = self._consensus_latency() * 1_000
         consensus_tps, consensus_bps, duration = self._consensus_throughput()
         #end_to_end_tps, end_to_end_bps, duration = self._end_to_end_throughput()
-        end_to_end_latency = self._end_to_end_latency() * 1_000
+        #end_to_end_latency = self._end_to_end_latency() * 1_000
 
         return (
             '\n'
@@ -268,14 +217,14 @@ class LogParser:
             f' Transaction size: {self.size[0]:,} B\n'
             f' Execution time: {round(duration):,} s\n'
             '\n'
-            f' Sync retry delay: {sync_retry_delay:,} ms\n'
-            f' Sync retry nodes: {sync_retry_nodes:,} node(s)\n'
-            f' batch size: {batch_size:,} B\n'
-            f' Max batch delay: {max_batch_delay:,} ms\n'
+            #f' Sync retry delay: {sync_retry_delay:,} ms\n'
+            #f' Sync retry nodes: {sync_retry_nodes:,} node(s)\n'
+            #f' batch size: {batch_size:,} B\n'
+            #f' Max batch delay: {max_batch_delay:,} ms\n'
             '\n'
             ' + RESULTS:\n'
             f' Consensus TPS: {round(consensus_tps):,} tx/s\n'
-            f' Consensus BPS: {round(consensus_bps):,} B/s\n'
+            #f' Consensus BPS: {round(consensus_bps):,} B/s\n'
             #f' Consensus latency: {consensus_latency:,} ms\n'
             #'\n'
             #f' End-to-end TPS: {round(end_to_end_tps):,} tx/s\n'

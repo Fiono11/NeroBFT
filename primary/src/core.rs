@@ -174,7 +174,7 @@ impl Core {
                     if committee.total_stake() >= committee.quorum_threshold() && !self.confirmed_txs.contains(&digest) {
                         self.confirmed_txs.insert(digest.clone());
                         info!("Committed {:?} -> {:?}=", parent.clone(), digest.clone());
-                        self.tx_digest.send(digest.clone()).await;
+                        //self.tx_digest.send(digest.clone()).await;
                     }
 
                     self.current_batch_size += payload.0.len();
@@ -219,11 +219,18 @@ impl Core {
         for tx in batch {
             let serialized = bincode::serialize(&tx).expect("Failed to serialize our own batch");
             // Broadcast the batch through the network.
-            let (names, addresses): (Vec<_>, _) = self.primary_addresses.iter().cloned().unzip();
+            let (names, mut addresses): (Vec<PublicKey>, Vec<SocketAddr>) = self.primary_addresses.iter().cloned().unzip();
+            /*for vote in &tx.votes {
+                if let Some(p) = names.iter().position(|&r| r == vote.author) {
+                    addresses.remove(p);
+                }
+            }*/
             let bytes = Bytes::from(serialized.clone());
             info!("addresses: {:#?}", addresses);
-            let handlers = self.network.broadcast(addresses, bytes).await;
-            info!("tx sent: {:#?}", tx);
+            if !addresses.is_empty() {
+               let handlers = self.network.broadcast(addresses, bytes).await;
+               info!("tx sent: {:#?}", tx);
+            }
         }
 
         /*#[cfg(feature = "benchmark")]

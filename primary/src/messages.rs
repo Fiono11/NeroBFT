@@ -1,5 +1,5 @@
 use std::collections::BTreeSet;
-use std::convert::TryInto;
+use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use ed25519_dalek::{Digest as _, Sha512};
 use config::Committee;
@@ -63,6 +63,10 @@ impl Transaction {
 
     pub fn timestamp(&self) -> u64{
         self.timestamp
+    }
+
+    pub fn digest(&self) -> BlockHash {
+        BlockHash(Digest::try_from(&self.payload.0[..]).unwrap())
     }
 }
 
