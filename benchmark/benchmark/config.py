@@ -26,17 +26,8 @@ class Committee:
             "name": {
                 "stake": 1,
                 "primary: {
-                    "primary_to_primary": x.x.x.x:x,
-                    "worker_to_primary": x.x.x.x:x,
+                    "transactions": x.x.x.x:x,
                 },
-                "workers": {
-                    "0": {
-                        "primary_to_worker": x.x.x.x:x,
-                        "worker_to_worker": x.x.x.x:x,
-                        "transactions": x.x.x.x:x
-                    },
-                    ...
-                }
             },
             ...
         }
@@ -52,7 +43,7 @@ class Committee:
         assert isinstance(addresses, OrderedDict)
         assert all(isinstance(x, str) for x in addresses.keys())
         assert all(
-            isinstance(x, list) and len(x) > 1 for x in addresses.values()
+            isinstance(x, list) and len(x) == 1 for x in addresses.values()
         )
         assert all(
             isinstance(x, str) for y in addresses.values() for x in y
@@ -65,24 +56,13 @@ class Committee:
         for name, hosts in addresses.items():
             host = hosts.pop(0)
             primary_addr = {
-                'primary_to_primary': f'{host}:{port}',
-                'worker_to_primary': f'{host}:{port + 1}'
+                'transactions': f'{host}:{port + 1}'
             }
             port += 2
-
-            workers_addr = OrderedDict()
-            for j, host in enumerate(hosts):
-                workers_addr[j] = {
-                    'primary_to_worker': f'{host}:{port}',
-                    'transactions': f'{host}:{port + 1}',
-                    'worker_to_worker': f'{host}:{port + 2}',
-                }
-                port += 3
 
             self.json['authorities'][name] = {
                 'stake': 1,
                 'primary': primary_addr,
-                'workers': workers_addr
             }
 
     def primary_addresses(self, faults=0):
@@ -91,19 +71,16 @@ class Committee:
         addresses = []
         good_nodes = self.size() - faults
         for authority in list(self.json['authorities'].values())[:good_nodes]:
-            addresses += [authority['primary']['primary_to_primary']]
+            addresses += [authority['primary']['transactions']]
         return addresses
 
-    def workers_addresses(self, faults=0):
+    def transactions(self, faults=0):
         ''' Returns an ordered list of list of workers' addresses. '''
         assert faults < self.size()
         addresses = []
         good_nodes = self.size() - faults
         for authority in list(self.json['authorities'].values())[:good_nodes]:
-            authority_addresses = []
-            for id, worker in authority['workers'].items():
-                authority_addresses += [(id, worker['transactions'])]
-            addresses.append(authority_addresses)
+            addresses += [authority['primary']['transactions']]
         return addresses
 
     def ips(self, name=None):
@@ -116,13 +93,7 @@ class Committee:
         ips = set()
         for name in names:
             addresses = self.json['authorities'][name]['primary']
-            ips.add(self.ip(addresses['primary_to_primary']))
-            ips.add(self.ip(addresses['worker_to_primary']))
-
-            for worker in self.json['authorities'][name]['workers'].values():
-                ips.add(self.ip(worker['primary_to_worker']))
-                ips.add(self.ip(worker['worker_to_worker']))
-                ips.add(self.ip(worker['transactions']))
+            ips.add(self.ip(addresses['transactions']))
 
         return list(ips)
 
@@ -136,10 +107,6 @@ class Committee:
         ''' Returns the number of authorities. '''
         return len(self.json['authorities'])
 
-    def workers(self):
-        ''' Returns the total number of workers (all authorities altogether). '''
-        return sum(len(x['workers']) for x in self.json['authorities'].values())
-
     def print(self, filename):
         assert isinstance(filename, str)
         with open(filename, 'w') as f:
@@ -152,12 +119,11 @@ class Committee:
 
 
 class LocalCommittee(Committee):
-    def __init__(self, names, port, workers):
+    def __init__(self, names, port):
         assert isinstance(names, list)
         assert all(isinstance(x, str) for x in names)
         assert isinstance(port, int)
-        assert isinstance(workers, int) and workers > 0
-        addresses = OrderedDict((x, ['127.0.0.1']*(1+workers)) for x in names)
+        addresses = OrderedDict((x, ['127.0.0.1']*1) for x in names)
         super().__init__(addresses, port)
 
 
@@ -165,9 +131,6 @@ class NodeParameters:
     def __init__(self, json):
         inputs = []
         try:
-            inputs += [json['header_size']]
-            inputs += [json['max_header_delay']]
-            inputs += [json['gc_depth']]
             inputs += [json['sync_retry_delay']]
             inputs += [json['sync_retry_nodes']]
             inputs += [json['batch_size']]
@@ -203,14 +166,6 @@ class BenchParameters:
                 raise ConfigError('Missing input rate')
             self.rate = [int(x) for x in rate]
 
-            
-            self.workers = int(json['workers'])
-
-            if 'collocate' in json:
-                self.collocate = bool(json['collocate'])
-            else:
-                self.collocate = True
-
             self.tx_size = int(json['tx_size'])
            
             self.duration = int(json['duration'])
@@ -239,17 +194,6 @@ class PlotParameters:
                 raise ConfigError('Missing number of nodes')
             self.nodes = [int(x) for x in nodes]
 
-            workers = json['workers']
-            workers = workers if isinstance(workers, list) else [workers]
-            if not workers:
-                raise ConfigError('Missing number of workers')
-            self.workers = [int(x) for x in workers]
-
-            if 'collocate' in json:
-                self.collocate = bool(json['collocate'])
-            else:
-                self.collocate = True
-
             self.tx_size = int(json['tx_size'])
 
             max_lat = json['max_latency']
@@ -264,10 +208,3 @@ class PlotParameters:
         except ValueError:
             raise ConfigError('Invalid parameters type')
 
-        if len(self.nodes) > 1 and len(self.workers) > 1:
-            raise ConfigError(
-                'Either the "nodes" or the "workers can be a list (not both)'
-            )
-
-    def scalability(self):
-        return len(self.workers) > 1

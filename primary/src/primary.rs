@@ -21,7 +21,7 @@ use crate::messages::{Batch, Transaction};
 /// The default channel capacity for each channel of the worker.
 pub const CHANNEL_CAPACITY: usize = 1_000;
 
-pub struct Node {
+pub struct Primary {
     /// The keypair of this authority.
     keypair: KeyPair,
     /// The committee information.
@@ -32,14 +32,17 @@ pub struct Node {
     store: Store,
 }
 
-impl Node {
+impl Primary {
     pub fn spawn(
         keypair: KeyPair,
         committee: Committee,
         parameters: Parameters,
         store: Store,
     ) {
-        // Define a worker instance.
+        // Write the parameters to the logs.
+        parameters.log();
+
+        // Define a primary instance.
         let primary = Self {
             keypair: keypair.clone(),
             committee: committee.clone(),
@@ -47,8 +50,30 @@ impl Node {
             store,
         };
 
+        let (tx_batch_maker, rx_batch_maker) = channel(CHANNEL_CAPACITY);
+
         // Spawn all primary tasks.
-        primary.handle_transactions();
+        primary.handle_transactions(tx_batch_maker);
+
+        // The `SignatureService` is used to require signatures on specific digests.
+        let signature_service = SignatureService::new(keypair.secret.clone());
+
+        // The transactions are sent to the `BatchMaker` that assembles them into batches. It then broadcasts
+        // (in a reliable manner) the batches to all other workers that share the same `id` as us. Finally, it
+        // gathers the 'cancel handlers' of the messages and send them to the `QuorumWaiter`.
+        Core::spawn(
+            keypair.name.clone(),
+            signature_service,
+            committee.clone(),
+            primary.parameters.batch_size,
+            primary.parameters.max_batch_delay,
+            /* rx_transaction */ rx_batch_maker,
+            committee
+                .others_primaries(&keypair.name)
+                .iter()
+                .map(|(name, addresses)| (*name, addresses.transactions))
+                .collect(),
+        );
 
         // NOTE: This log entry is used to compute performance.
         info!(
@@ -63,39 +88,17 @@ impl Node {
     }
 
     /// Spawn all tasks responsible to handle clients transactions.
-    fn handle_transactions(&self) {
-        let (tx_batch_maker, rx_batch_maker) = channel(CHANNEL_CAPACITY);
-
+    fn handle_transactions(&self, tx_batch_maker: Sender<Transaction>) {
         // We first receive clients' transactions from the network.
         let mut address = self
             .committee
             .primary(&self.keypair.name)
             .expect("Our public key is not in the committee")
             .transactions;
-        address.set_ip("0.0.0.0".parse().unwrap());
+        address.set_ip("127.0.0.1".parse().unwrap());
         Receiver::spawn(
             address,
             /* handler */ TxReceiverHandler { tx_batch_maker },
-        );
-
-        // The `SignatureService` is used to require signatures on specific digests.
-        let signature_service = SignatureService::new(self.keypair.secret.clone());
-
-        // The transactions are sent to the `BatchMaker` that assembles them into batches. It then broadcasts
-        // (in a reliable manner) the batches to all other workers that share the same `id` as us. Finally, it
-        // gathers the 'cancel handlers' of the messages and send them to the `QuorumWaiter`.
-        Core::spawn(
-            self.keypair.name.clone(),
-            signature_service,
-            self.committee.clone(),
-            self.parameters.batch_size,
-            self.parameters.max_batch_delay,
-            /* rx_transaction */ rx_batch_maker,
-            self.committee
-                .others_primaries(&self.keypair.name)
-                .iter()
-                .map(|(name, addresses)| (*name, addresses.transactions))
-                .collect(),
         );
 
         info!(
@@ -116,15 +119,18 @@ impl MessageHandler for TxReceiverHandler {
     async fn dispatch(&self, _writer: &mut Writer, message: Bytes) -> Result<(), Box<dyn Error>> {
         // Send the transaction to the batch maker.
         match bincode::deserialize(&message) {
-            Ok(tx) => self.tx_batch_maker
-                .send(tx)
-                .await
-                .expect("Failed to send transaction"),
+            Ok(tx) => {
+                info!("Tx received: {:#?}", tx);
+                self.tx_batch_maker
+                    .send(tx)
+                    .await
+                    .expect("Failed to send transaction")
+            },
             Err(e) => warn!("Serialization error: {}", e),
         }
 
         // Give the change to schedule other tasks.
-        //tokio::task::yield_now().await;
+        tokio::task::yield_now().await;
         Ok(())
     }
 }

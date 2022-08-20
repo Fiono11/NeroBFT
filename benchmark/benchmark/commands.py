@@ -9,8 +9,12 @@ class CommandMaker:
     @staticmethod
     def cleanup():
         return (
-            f'rm -r .db-* ; rm .*.json ; mkdir -p {PathMaker.results_path()}'
+            f'rm .*.json ; mkdir -p {PathMaker.results_path()}'
         )
+
+    @staticmethod
+    def clean_dbs(i):
+        return f'rm -r {PathMaker.db_path(i)} ; mkdir -p {PathMaker.db_path(i)}'
 
     @staticmethod
     def clean_logs():
@@ -26,34 +30,20 @@ class CommandMaker:
         return f'./node generate_keys --filename {filename}'
 
     @staticmethod
-    def run_primary(keys, committee, store, parameters, debug=False):
+    def run_primary(keys, committee, store, parameters, debug=True):
         assert isinstance(keys, str)
         assert isinstance(committee, str)
         assert isinstance(parameters, str)
         assert isinstance(debug, bool)
         v = '-vvv' if debug else '-vv'
-        return (f'./node {v} run --keys {keys} --committee {committee} '
-                f'--store {store} --parameters {parameters} primary')
+        return f'./node {v} run --keys {keys} --committee {committee} --store {store} --parameters {parameters} primary'
 
     @staticmethod
-    def run_worker(keys, committee, store, parameters, id, debug=False):
-        assert isinstance(keys, str)
-        assert isinstance(committee, str)
-        assert isinstance(parameters, str)
-        assert isinstance(debug, bool)
-        v = '-vvv' if debug else '-vv'
-        return (f'./node {v} run --keys {keys} --committee {committee} '
-                f'--store {store} --parameters {parameters} worker --id {id}')
-
-    @staticmethod
-    def run_client(address, size, rate, nodes):
+    def run_client(address, size, rate):
         assert isinstance(address, str)
         assert isinstance(size, int) and size > 0
         assert isinstance(rate, int) and rate >= 0
-        assert isinstance(nodes, list)
-        assert all(isinstance(x, str) for x in nodes)
-        nodes = f'--nodes {" ".join(nodes)}' if nodes else ''
-        return f'./benchmark_client {address} --size {size} --rate {rate} {nodes}'
+        return f'./benchmark_client {address} --size {size} --rate {rate}'
 
     @staticmethod
     def kill():

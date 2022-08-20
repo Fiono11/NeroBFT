@@ -3,10 +3,10 @@ from fabric import task
 
 from benchmark.local import LocalBench
 from benchmark.logs import ParseError, LogParser
-from benchmark.utils import Print
+from benchmark.utils import Print, BenchError
 from benchmark.plot import Ploter, PlotError
 from benchmark.instance import InstanceManager
-from benchmark.remote import Bench, BenchError
+from benchmark.remote import Bench#, BenchError
 
 
 @task
@@ -14,16 +14,16 @@ def local(ctx, debug=True):
     ''' Run benchmarks on localhost '''
     bench_params = {
         'faults': 0,
-        'nodes': 4,
-        'workers': 1,
-        'rate': 50_000,
-        'tx_size': 512,
-        'duration': 20,
+        'nodes': 2,
+        'workers': 0,
+        'rate': 50,
+        'tx_size': 32,
+        'duration': 1,
     }
     node_params = {
-        'header_size': 1_000,  # bytes
-        'max_header_delay': 200,  # ms
-        'gc_depth': 50,  # rounds
+        #'header_size': 1_000,  # bytes
+        #'max_header_delay': 200,  # ms
+        #'gc_depth': 50,  # rounds
         'sync_retry_delay': 10_000,  # ms
         'sync_retry_nodes': 3,  # number of nodes
         'batch_size': 500_000,  # bytes
@@ -96,7 +96,7 @@ def remote(ctx, debug=False):
     bench_params = {
         'faults': 3,
         'nodes': [10],
-        'workers': 1,
+        'workers': 0,
         'collocate': True,
         'rate': [10_000, 110_000],
         'tx_size': 512,
@@ -104,9 +104,9 @@ def remote(ctx, debug=False):
         'runs': 2,
     }
     node_params = {
-        'header_size': 1_000,  # bytes
-        'max_header_delay': 200,  # ms
-        'gc_depth': 50,  # rounds
+        #'header_size': 1_000,  # bytes
+        #'max_header_delay': 200,  # ms
+        #'gc_depth': 50,  # rounds
         'sync_retry_delay': 10_000,  # ms
         'sync_retry_nodes': 3,  # number of nodes
         'batch_size': 500_000,  # bytes

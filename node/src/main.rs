@@ -1,13 +1,14 @@
-// Copyright(C) Facebook, Inc. and its affiliates.
 use anyhow::{Context, Result};
 use clap::{crate_name, crate_version, App, AppSettings, ArgMatches, SubCommand};
 use config::Export as _;
 use config::Import as _;
 use config::{Committee, KeyPair, Parameters};
 use env_logger::Env;
+use log::info;
 use store::Store;
 use tokio::sync::mpsc::{channel, Receiver};
-use node::{Transaction, Node};
+use crypto::Digest;
+use primary::{Transaction, Primary};
 
 /// The default channel capacity.
 pub const CHANNEL_CAPACITY: usize = 1_000;
@@ -31,11 +32,6 @@ async fn main() -> Result<()> {
                 .args_from_usage("--parameters=[FILE] 'The file containing the node parameters'")
                 .args_from_usage("--store=<PATH> 'The path where to create the data store'")
                 .subcommand(SubCommand::with_name("primary").about("Run a single primary"))
-                .subcommand(
-                    SubCommand::with_name("worker")
-                        .about("Run a single worker")
-                        .args_from_usage("--id=<INT> 'The worker id'"),
-                )
                 .setting(AppSettings::SubcommandRequiredElseHelp),
         )
         .setting(AppSettings::SubcommandRequiredElseHelp)
@@ -86,11 +82,14 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
     // Make the data store.
     let store = Store::new(store_path).context("Failed to create a store")?;
 
+    // Channels the sequence of certificates.
+    let (_tx_output, rx_output) = channel(CHANNEL_CAPACITY);
+
     // Check whether to run a primary, a worker, or an entire authority.
     match matches.subcommand() {
         // Spawn the primary and consensus core.
         ("primary", _) => {
-            Node::spawn(
+            Primary::spawn(
                 keypair,
                 committee.clone(),
                 parameters.clone(),
@@ -100,7 +99,19 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
         _ => unreachable!(),
     }
 
+    // Analyze the consensus' output.
+    analyze(rx_output).await;
+
     // If this expression is reached, the program ends and all other tasks terminate.
     unreachable!();
+    //Ok(())
+}
+
+/// Receives an ordered list of certificates and apply any application-specific logic.
+async fn analyze(mut rx_output: Receiver<Digest>) {
+    while let Some(tx) = rx_output.recv().await {
+        // NOTE: Here goes the application logic.
+        info!("Confirmed tx: {:#?}", tx);
+    }
 }
 

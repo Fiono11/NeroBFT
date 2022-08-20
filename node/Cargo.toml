@@ -1,5 +1,5 @@
 [package]
-name = "bin"
+name = "node"
 version = "0.1.0"
 edition = "2018"
 
@@ -18,16 +18,12 @@ futures = "0.3.15"
 config = { path = "../config" }
 store = { path = "../store" }
 crypto = { path = "../crypto" }
-node = { path = "../node" }
+primary = { path = "../primary" }
 
 [features]
-#benchmark = ["worker/benchmark", "primary/benchmark", "consensus/benchmark"]
+benchmark = ["primary/benchmark"]
 
 [[bin]]         
 name = "benchmark_client"   
 path = "src/benchmark_client.rs" 
-#required-features = ["benchmark"]
-
-[[bin]]
-name = "main"
-path = "src/main.rs"
+required-features = ["benchmark"]

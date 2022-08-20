@@ -125,13 +125,6 @@ class Ploter:
         return f'{x} nodes {faults}'
 
     @staticmethod
-    def workers(data):
-        x = search(r'Workers per node: (\d+)', data).group(1)
-        f = search(r'Faults: (\d+)', data).group(1)
-        faults = f'({f} faulty)' if f != '0' else ''
-        return f'{x} workers {faults}'
-
-    @staticmethod
     def max_latency(data):
         x = search(r'Max latency: (\d+)', data).group(1)
         f = search(r'Faults: (\d+)', data).group(1)
@@ -139,10 +132,10 @@ class Ploter:
         return f'Max latency: {float(x) / 1000:,.1f} s {faults}'
 
     @classmethod
-    def plot_latency(cls, files, scalability):
+    def plot_latency(cls, files):
         assert isinstance(files, list)
         assert all(isinstance(x, str) for x in files)
-        z_axis = cls.workers if scalability else cls.nodes
+        z_axis = cls.nodes
         x_label = 'Throughput (tx/s)'
         y_label = ['Latency (s)']
         ploter = cls(files)
@@ -153,7 +146,7 @@ class Ploter:
         assert isinstance(files, list)
         assert all(isinstance(x, str) for x in files)
         z_axis = cls.max_latency
-        x_label = 'Workers per node' if scalability else 'Committee size'
+        x_label = 'Committee size'
         y_label = ['Throughput (tx/s)', 'Throughput (MB/s)']
         ploter = cls(files)
         ploter._plot(x_label, y_label, ploter._tps, z_axis, 'tps')
@@ -169,7 +162,7 @@ class Ploter:
         LogAggregator(params.max_latency).print()
 
         # Make the latency, tps, and robustness graphs.
-        iterator = params.workers if params.scalability() else params.nodes
+        iterator = params.nodes
         latency_files, tps_files = [], []
         for f in params.faults:
             for x in iterator:
@@ -177,9 +170,7 @@ class Ploter:
                     PathMaker.agg_file(
                         'latency',
                         f,
-                        x if not params.scalability() else params.nodes[0],
-                        x if params.scalability() else params.workers[0],
-                        params.collocate,
+                        params.nodes[0],
                         'any',
                         params.tx_size,
                     )
@@ -190,14 +181,12 @@ class Ploter:
                     PathMaker.agg_file(
                         'tps',
                         f,
-                        'x' if not params.scalability() else params.nodes[0],
-                        'x' if params.scalability() else params.workers[0],
-                        params.collocate,
+                        params.nodes[0],
                         'any',
                         params.tx_size,
                         max_latency=l
                     )
                 )
 
-        cls.plot_latency(latency_files, params.scalability())
-        cls.plot_tps(tps_files, params.scalability())
+        cls.plot_latency(latency_files)
+        cls.plot_tps(tps_files)

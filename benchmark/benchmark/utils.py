@@ -30,14 +30,11 @@ class PathMaker:
     @staticmethod
     def key_file(i):
         assert isinstance(i, int) and i >= 0
-        return f'.node-{i}.json'
+        return f'.node-{i}'
 
     @staticmethod
-    def db_path(i, j=None):
-        assert isinstance(i, int) and i >= 0
-        assert (isinstance(j, int) and i >= 0) or j is None
-        worker_id = f'-{j}' if j is not None else ''
-        return f'.db-{i}{worker_id}'
+    def db_path(i):
+        return i
 
     @staticmethod
     def logs_path():
@@ -49,26 +46,19 @@ class PathMaker:
         return join(PathMaker.logs_path(), f'primary-{i}.log')
 
     @staticmethod
-    def worker_log_file(i, j):
+    def client_log_file(i):
         assert isinstance(i, int) and i >= 0
-        assert isinstance(j, int) and i >= 0
-        return join(PathMaker.logs_path(), f'worker-{i}-{j}.log')
-
-    @staticmethod
-    def client_log_file(i, j):
-        assert isinstance(i, int) and i >= 0
-        assert isinstance(j, int) and i >= 0
-        return join(PathMaker.logs_path(), f'client-{i}-{j}.log')
+        return join(PathMaker.logs_path(), f'client-{i}.log')
 
     @staticmethod
     def results_path():
         return 'results'
 
     @staticmethod
-    def result_file(faults, nodes, workers, collocate, rate, tx_size):
+    def result_file(faults, nodes, rate, tx_size):
         return join(
             PathMaker.results_path(),
-            f'bench-{faults}-{nodes}-{workers}-{collocate}-{rate}-{tx_size}.txt'
+            f'bench-{faults}-{nodes}--{rate}-{tx_size}.txt'
         )
 
     @staticmethod
@@ -76,11 +66,11 @@ class PathMaker:
         return 'plots'
 
     @staticmethod
-    def agg_file(type, faults, nodes, workers, collocate, rate, tx_size, max_latency=None):
+    def agg_file(type, faults, nodes, rate, tx_size, max_latency=None):
         if max_latency is None:
-            name = f'{type}-bench-{faults}-{nodes}-{workers}-{collocate}-{rate}-{tx_size}.txt'
+            name = f'{type}-bench-{faults}-{nodes}-{rate}-{tx_size}.txt'
         else:
-            name = f'{type}-{max_latency}-bench-{faults}-{nodes}-{workers}-{collocate}-{rate}-{tx_size}.txt'
+            name = f'{type}-{max_latency}-bench-{faults}-{nodes}-{rate}-{tx_size}.txt'
         return join(PathMaker.plots_path(), name)
 
     @staticmethod

@@ -6,9 +6,9 @@ from time import sleep
 
 from benchmark.commands import CommandMaker
 from benchmark.config import Key, LocalCommittee, NodeParameters, BenchParameters, ConfigError
+
 from benchmark.logs import LogParser, ParseError
 from benchmark.utils import Print, BenchError, PathMaker
-
 
 class LocalBench:
     BASE_PORT = 3000
@@ -35,7 +35,7 @@ class LocalBench:
         except subprocess.SubprocessError as e:
             raise BenchError('Failed to kill testbed', e)
 
-    def run(self, debug=False):
+    def run(self, debug=True):
         assert isinstance(debug, bool)
         Print.heading('Starting local benchmark')
 
@@ -68,24 +68,21 @@ class LocalBench:
                 keys += [Key.from_file(filename)]
 
             names = [x.name for x in keys]
-            committee = LocalCommittee(names, self.BASE_PORT, self.workers)
+            print(names)
+            committee = LocalCommittee(names, self.BASE_PORT)
             committee.print(PathMaker.committee_file())
 
             self.node_parameters.print(PathMaker.parameters_file())
 
             # Run the clients (they will wait for the nodes to be ready).
-            workers_addresses = committee.workers_addresses(self.faults)
-            rate_share = ceil(rate / committee.workers())
-            for i, addresses in enumerate(workers_addresses):
-                for (id, address) in addresses:
-                    cmd = CommandMaker.run_client(
-                        address,
-                        self.tx_size,
-                        rate_share,
-                        [x for y in workers_addresses for _, x in y]
-                    )
-                    log_file = PathMaker.client_log_file(i, id)
-                    self._background_run(cmd, log_file)
+            primary_addresses = committee.transactions(self.faults)
+            print(primary_addresses)
+            rate_share = rate
+
+            for i, address in enumerate(committee.primary_addresses(self.faults)):
+                cmd = f'{CommandMaker.clean_dbs(i)}'
+                subprocess.run([cmd], shell=True, stderr=subprocess.DEVNULL)
+                sleep(0.5)  # Removing the store may take time.
 
             # Run the primaries (except the faulty ones).
             for i, address in enumerate(committee.primary_addresses(self.faults)):
@@ -99,19 +96,16 @@ class LocalBench:
                 log_file = PathMaker.primary_log_file(i)
                 self._background_run(cmd, log_file)
 
-            # Run the workers (except the faulty ones).
-            for i, addresses in enumerate(workers_addresses):
-                for (id, address) in addresses:
-                    cmd = CommandMaker.run_worker(
-                        PathMaker.key_file(i),
-                        PathMaker.committee_file(),
-                        PathMaker.db_path(i, id),
-                        PathMaker.parameters_file(),
-                        id,  # The worker's id.
-                        debug=debug
-                    )
-                    log_file = PathMaker.worker_log_file(i, id)
-                    self._background_run(cmd, log_file)
+            # Run the clients (they will wait for the nodes to be ready).
+            for i, address in enumerate(primary_addresses):
+                print(address)
+                cmd = CommandMaker.run_client(
+                    address,
+                    self.tx_size,
+                    rate_share,
+                )
+                log_file = PathMaker.client_log_file(i)
+                self._background_run(cmd, log_file)
 
             # Wait for all transactions to be processed.
             Print.info(f'Running benchmark ({self.duration} sec)...')

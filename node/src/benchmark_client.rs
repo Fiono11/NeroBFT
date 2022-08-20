@@ -1,19 +1,20 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 use anyhow::{Context, Result};
-use bytes::BufMut as _;
+use bytes::{BufMut, Bytes};
 use bytes::BytesMut;
 use clap::{crate_name, crate_version, App, AppSettings};
 use env_logger::Env;
 use futures::future::join_all;
 use futures::sink::SinkExt as _;
-use log::{info, warn};
+use log::{debug, info, warn};
 use rand::Rng;
 use std::net::SocketAddr;
+use bincode::serialize;
 use tokio::net::TcpStream;
 use tokio::time::{interval, sleep, Duration, Instant};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use crypto::Digest;
-use node::{Payload, Transaction, now, ParentHash};
+use primary::{Payload, Transaction, now, ParentHash};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -85,6 +86,7 @@ struct Client {
 
 impl Client {
     pub async fn send(&self) -> Result<()> {
+
         const PRECISION: u64 = 20; // Sample precision.
         const BURST_DURATION: u64 = 1000 / PRECISION;
 
@@ -137,7 +139,9 @@ impl Client {
                 tx.payload = Payload(p);
                 tx.timestamp = now();
                 tx.parent = ParentHash(Digest::random());
-                if let Err(e) = transport.send(bytes).await {
+                let transaction = bincode::serialize(&tx).unwrap();;
+
+                if let Err(e) = transport.send(Bytes::from(transaction)).await {
                     warn!("Failed to send transaction: {}", e);
                     break 'main;
                 }

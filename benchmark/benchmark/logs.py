@@ -5,17 +5,16 @@ from multiprocessing import Pool
 from os.path import join
 from re import findall, search
 from statistics import mean
+from datetime import datetime
 
 from benchmark.utils import Print
-
 
 class ParseError(Exception):
     pass
 
-
 class LogParser:
-    def __init__(self, clients, primaries, workers, faults=0):
-        inputs = [clients, primaries, workers]
+    def __init__(self, clients, primaries, faults=0):
+        inputs = [clients, primaries]
         assert all(isinstance(x, list) for x in inputs)
         assert all(isinstance(x, str) for y in inputs for x in y)
         assert all(x for x in inputs)
@@ -23,10 +22,8 @@ class LogParser:
         self.faults = faults
         if isinstance(faults, int):
             self.committee_size = len(primaries) + int(faults)
-            self.workers =  len(workers) // len(primaries)
         else:
             self.committee_size = '?'
-            self.workers = '?'
 
         # Parse the clients logs.
         try:
@@ -44,23 +41,38 @@ class LogParser:
                 results = p.map(self._parse_primaries, primaries)
         except (ValueError, IndexError, AttributeError) as e:
             raise ParseError(f'Failed to parse nodes\' logs: {e}')
-        proposals, commits, self.configs, primary_ips = zip(*results)
+        proposals, commits, self.configs, sizes, self.received_samples, primary_ips, l = zip(*results)
+        #self.commits = self._merge_results([x.items() for x in commits])
+        #self.first_receive = a
+        #self.commits = commits
+        #print ("commits: ", self.commits)
+
         self.proposals = self._merge_results([x.items() for x in proposals])
         self.commits = self._merge_results([x.items() for x in commits])
 
-        # Parse the workers logs.
-        try:
-            with Pool() as p:
-                results = p.map(self._parse_workers, workers)
-        except (ValueError, IndexError, AttributeError) as e:
-            raise ParseError(f'Failed to parse workers\' logs: {e}')
-        sizes, self.received_samples, workers_ips = zip(*results)
-        self.sizes = {
-            k: v for x in sizes for k, v in x.items() if k in self.commits
-        }
+        length = len(l)
 
-        # Determine whether the primary and the workers are collocated.
-        self.collocate = set(primary_ips) == set(workers_ips)
+        middle_index = length // len(primaries)
+
+        first_half = l[:middle_index]
+        second_half = l[middle_index:]
+
+        assert first_half == second_half
+
+        #self.proposals = self._merge_results([x.items() for x in proposals])
+        #self.commits = self._merge_results([x.items() for x in commits])
+        #self.sizes = {
+            #k: v for x in sizes for k, v in x.items() if k in self.commits
+        #}
+
+        self.sizes = len(commits[0])
+        print("sized: ", self.sizes)
+
+        # Check whether clients missed their target rate.
+        if self.misses != 0:
+            Print.warn(
+                f'Clients missed their target rate {self.misses:,} time(s)'
+            )
 
         # Check whether clients missed their target rate.
         if self.misses != 0:
@@ -98,26 +110,48 @@ class LogParser:
         if search(r'(?:panicked|Error)', log) is not None:
             raise ParseError('Primary(s) panicked')
 
-        tmp = findall(r'\[(.*Z) .* Created B\d+\([^ ]+\) -> ([^ ]+=)', log)
+        tmp = findall(r'\[(.*Z) .* Received KeyImage\([^ ]+\) -> ([^ ]+=)', log)
         tmp = [(d, self._to_posix(t)) for t, d in tmp]
         proposals = self._merge_results([tmp])
-        print(proposals)
+        print("proposals: ", proposals)
 
-        tmp = findall(r'\[(.*Z) .* Committed B\d+\([^ ]+\) -> ([^ ]+=)', log)
-        tmp = [(d, self._to_posix(t)) for t, d in tmp]
-        commits = self._merge_results([tmp])
-        print(commits)
+        tmp1 = findall(r'\[(.*Z) .* Committed KeyImage\([^ ]+\) -> ([^ ]+=)', log)
+        tmp1 = [(d, self._to_posix(t)) for t, d in tmp1]
+        commits = self._merge_results([tmp1])
+        print("commits: ", commits)
+
+        #tmp3 = findall(r'\[(.*Z) .* Committed (.*)', log)
+        #tmp4 = [(d, self._to_posix(t)) for t, d in tmp3]
+        #commits = tmp4
+
+        #first_receive = findall(r'\[(.*Z) .* Received (.*)', log)
+        #a = [(d, self._to_posix(t)) for t, d in first_receive]
+        #print(a[0])
+
+        tmp1 = findall(r'\[(.*Z) .* TXOUTS: TxOut {\s*.* masked_amount: MaskedAmount {\s*.* twisted_elgamal: TwistedElGamal {\s* c1: (.*)', log)
+        #tmp2 = [(d, self._to_posix(t)) for t, d in tmp1]
+
+        tmp5 = findall(r'\[(.*Z) .* TXOUTS: TxOut {\s*.* masked_amount: MaskedAmount {\s*.* twisted_elgamal: TwistedElGamal {\s* c1: .*\s* c2: (.*)', log)
+        #tmp6 = [(d, self._to_posix(t)) for t, d in tmp5]
+
+        tmp7 = findall(r'\[(.*Z) .* TXOUTS: TxOut {\s*.* masked_amount: MaskedAmount {\s*.* twisted_elgamal: TwistedElGamal {\s* c1: .*\s* c2: .*\s* },.*\s* masked_value: (.*)', log)
+        #tmp8 = [(d, self._to_posix(t)) for t, d in tmp7]
+
+        tmp9 = findall(r'\[(.*Z) .* TXOUTS: TxOut {\s*.* masked_amount: MaskedAmount {\s*.* twisted_elgamal: TwistedElGamal {\s* c1: .*\s* c2: .*\s* },.*\s* masked_value: .*\s*},.*\s* target_key: (.*)', log)
+        #tmp10 = [(d, self._to_posix(t)) for t, d in tmp9]
+
+        tmp10 = findall(r'\[(.*Z) .* TXOUTS: TxOut {\s*.* masked_amount: MaskedAmount {\s*.* twisted_elgamal: TwistedElGamal {\s* c1: .*\s* c2: .*\s* },.*\s* masked_value: .*\s*},.*\s* target_key: .*\s* public_key: (.*)', log)
+
+        l = list()
+
+        for t, d in tmp10:
+            #print ("TMP1: ", d)
+            l.append(d)
+
+        #print ("TMP2: ", tmp2)
+        #print ("TXOUTS: ", commits1)
 
         configs = {
-            'header_size': int(
-                search(r'Header size .* (\d+)', log).group(1)
-            ),
-            'max_header_delay': int(
-                search(r'Max header delay .* (\d+)', log).group(1)
-            ),
-            'gc_depth': int(
-                search(r'Garbage collection depth .* (\d+)', log).group(1)
-            ),
             'sync_retry_delay': int(
                 search(r'Sync retry delay .* (\d+)', log).group(1)
             ),
@@ -133,12 +167,6 @@ class LogParser:
         }
 
         ip = search(r'booted on (\d+.\d+.\d+.\d+)', log).group(1)
-        
-        return proposals, commits, configs, ip
-
-    def _parse_workers(self, log):
-        if search(r'(?:panic|Error)', log) is not None:
-            raise ParseError('Worker(s) panicked')
 
         tmp = findall(r'Batch ([^ ]+) contains (\d+) B', log)
         sizes = {d: int(s) for d, s in tmp}
@@ -146,36 +174,64 @@ class LogParser:
         tmp = findall(r'Batch ([^ ]+) contains sample tx (\d+)', log)
         samples = {int(s): d for d, s in tmp}
 
-        ip = search(r'booted on (\d+.\d+.\d+.\d+)', log).group(1)
+        #print("commits: ", commits)
 
-        return sizes, samples, ip
+        return proposals, commits, configs, sizes, samples, ip, l
 
     def _to_posix(self, string):
         x = datetime.fromisoformat(string.replace('Z', '+00:00'))
         return datetime.timestamp(x)
+
+    #def _consensus_throughput(self):
+        #if not self.commits:
+            #return 0, 0, 0
+        #print("first_receive: ", self.first_receive[-1][1][1])
+        #start = int(self.first_receive[-1][1][1])
+        #end = int(self.commits[-1][1][1])
+        #print("commits: ", self.commits[-1][1][1])
+        #print("latest commmit: ", self.commits[-1][1][1])
+        #a = datetime.fromtimestamp(start)
+        #b = datetime.fromtimestamp(end)
+        #print(a)
+        #print(b)
+        #duration = datetime.fromtimestamp(end - start)
+        #bytes = sum(self.sizes.values())
+        #bps = bytes / duration
+        #tps = bps / self.size[0]
+        #bps = 0
+        #print(len(self.commits[0]))
+        #print(duration)
+        #tps = len(self.commits[0]) / int(duration)
+        #return tps, bps, duration
 
     def _consensus_throughput(self):
         if not self.commits:
             return 0, 0, 0
         start, end = min(self.proposals.values()), max(self.commits.values())
         duration = end - start
-        bytes = sum(self.sizes.values())
-        bps = bytes / duration
-        tps = bps / self.size[0]
-        return tps, bps, duration
+        print("duration: ", duration)
+        #bytes = self.sizes
+        #print("bytes: ", bytes)
+        #bps = bytes / duration
+        #tps = bps / self.size[0]
+        tps = self.sizes / duration
+        return tps, tps, duration
 
     def _consensus_latency(self):
-        latency = [c - self.proposals[d] for d, c in self.commits.items()]
-        return mean(latency) if latency else 0
+        latency = [c for c in self.commits.items()]
+        return latency if latency else 0
 
     def _end_to_end_throughput(self):
         if not self.commits:
             return 0, 0, 0
         start, end = min(self.start), max(self.commits.values())
+        #print("commits: ", end)
         duration = end - start
-        bytes = sum(self.sizes.values())
-        bps = bytes / duration
-        tps = bps / self.size[0]
+        #bytes = sum(self.sizes.values())
+        #bps = bytes / duration
+        #tps = bps / self.size[0]
+        bps = 0
+        tps = self.sizes / duration
         return tps, bps, duration
 
     def _end_to_end_latency(self):
@@ -190,17 +246,14 @@ class LogParser:
         return mean(latency) if latency else 0
 
     def result(self):
-        header_size = self.configs[0]['header_size']
-        max_header_delay = self.configs[0]['max_header_delay']
-        gc_depth = self.configs[0]['gc_depth']
         sync_retry_delay = self.configs[0]['sync_retry_delay']
         sync_retry_nodes = self.configs[0]['sync_retry_nodes']
         batch_size = self.configs[0]['batch_size']
         max_batch_delay = self.configs[0]['max_batch_delay']
 
-        consensus_latency = self._consensus_latency() * 1_000
-        consensus_tps, consensus_bps, _ = self._consensus_throughput()
-        end_to_end_tps, end_to_end_bps, duration = self._end_to_end_throughput()
+        #consensus_latency = self._consensus_latency() * 1_000
+        consensus_tps, consensus_bps, duration = self._consensus_throughput()
+        #end_to_end_tps, end_to_end_bps, duration = self._end_to_end_throughput()
         end_to_end_latency = self._end_to_end_latency() * 1_000
 
         return (
@@ -211,15 +264,10 @@ class LogParser:
             ' + CONFIG:\n'
             f' Faults: {self.faults} node(s)\n'
             f' Committee size: {self.committee_size} node(s)\n'
-            f' Worker(s) per node: {self.workers} worker(s)\n'
-            f' Collocate primary and workers: {self.collocate}\n'
             f' Input rate: {sum(self.rate):,} tx/s\n'
             f' Transaction size: {self.size[0]:,} B\n'
             f' Execution time: {round(duration):,} s\n'
             '\n'
-            f' Header size: {header_size:,} B\n'
-            f' Max header delay: {max_header_delay:,} ms\n'
-            f' GC depth: {gc_depth:,} round(s)\n'
             f' Sync retry delay: {sync_retry_delay:,} ms\n'
             f' Sync retry nodes: {sync_retry_nodes:,} node(s)\n'
             f' batch size: {batch_size:,} B\n'
@@ -228,11 +276,11 @@ class LogParser:
             ' + RESULTS:\n'
             f' Consensus TPS: {round(consensus_tps):,} tx/s\n'
             f' Consensus BPS: {round(consensus_bps):,} B/s\n'
-            f' Consensus latency: {round(consensus_latency):,} ms\n'
-            '\n'
-            f' End-to-end TPS: {round(end_to_end_tps):,} tx/s\n'
-            f' End-to-end BPS: {round(end_to_end_bps):,} B/s\n'
-            f' End-to-end latency: {round(end_to_end_latency):,} ms\n'
+            #f' Consensus latency: {consensus_latency:,} ms\n'
+            #'\n'
+            #f' End-to-end TPS: {round(end_to_end_tps):,} tx/s\n'
+            #f' End-to-end BPS: {round(end_to_end_bps):,} B/s\n'
+            #f' End-to-end latency: {round(end_to_end_latency):,} ms\n'
             '-----------------------------------------\n'
         )
 
@@ -253,9 +301,5 @@ class LogParser:
         for filename in sorted(glob(join(directory, 'primary-*.log'))):
             with open(filename, 'r') as f:
                 primaries += [f.read()]
-        workers = []
-        for filename in sorted(glob(join(directory, 'worker-*.log'))):
-            with open(filename, 'r') as f:
-                workers += [f.read()]
 
-        return cls(clients, primaries, workers, faults=faults)
+        return cls(clients, primaries, faults=faults)
