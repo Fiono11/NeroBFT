@@ -1,12 +1,12 @@
 {
     "authorities": {
-        "3TgXOeZPbmvKAXXxn9fcmQB2WpUbto/0+2AOJSMOMSI=": {
+        "Kld8QlTP7C/WGUuFAZsDP5x7/fOcH5iMvVjGTARFXeE=": {
             "primary": {
                 "transactions": "127.0.0.1:3001"
             },
             "stake": 1
         },
-        "Vwit5XLsOgHIiTYxQUCvwzek9biZUe3bb8/vEe0jNzQ=": {
+        "MFCW3Jqcl1mJ5lNiTaHd63GYfunclCZreP9RXFiv1Nw=": {
             "primary": {
                 "transactions": "127.0.0.1:3003"
             },

@@ -45,18 +45,26 @@ class LogParser:
                 results = p.map(self._parse_primaries, primaries)
         except (ValueError, IndexError, AttributeError) as e:
             raise ParseError(f'Failed to parse nodes\' logs: {e}')
-        #commits = zip(*results)
+        proposals, commits = zip(*results)
 
         print("results: ", results)
 
-        l = numpy.array_split(results, len(primaries))
+        l = numpy.array_split(commits, len(primaries))
 
-        print(l[0][0])
-        print(l[1][0])
+        print("l1: ", l[0][0])
+        print("l2: ", l[1][0])
 
         assert sorted(l[0][0]) == sorted(l[1][0])
 
-        self.commits = results
+        #self.commits = results
+
+        self.commits = self._merge_results([x.items() for x in commits])
+
+        print("self commits: ", self.commits)
+
+        self.proposals = self._merge_results([x.items() for x in proposals])
+
+        print("self proposals: ", self.proposals)
 
         #length = len(self.commits)
 
@@ -118,13 +126,18 @@ class LogParser:
         if search(r'(?:panicked|Error)', log) is not None:
             raise ParseError('Primary(s) panicked')
 
-        tmp1 = findall(r'\[(.*Z) .* Committed ParentHash\([^ ]+\) -> ([^ ]+=)', log)
-        tmp2 = [t for d, t in tmp1]
-        commits = tmp2
-        #commits = self._merge_results([tmp2])
-        print("commits: ", tmp2)
+        tmp = findall(r'\[(.*Z) .* Received BlockHash([^ ]+\=)', log)
+        tmp = [(d, self._to_posix(t)) for t, d in tmp]
+        proposals = self._merge_results([tmp])
+        print("proposals: ", proposals)
 
-        return commits
+        tmp1 = findall(r'\[(.*Z) .* Committed ParentHash\([^ ]+\) -> ([^ ]+=)', log)
+        tmp2 = [(d, self._to_posix(t)) for t, d in tmp1]
+        commits = self._merge_results([tmp2])
+        print("tmp2: ", tmp2)
+        print("commits: ", commits)
+
+        return proposals, commits
 
     def _to_posix(self, string):
         x = datetime.fromisoformat(string.replace('Z', '+00:00'))
@@ -155,8 +168,8 @@ class LogParser:
     def _consensus_throughput(self):
         if not self.commits:
             return 0, 0, 0
-        #start, end = 0, max(self.commits.values())
-        start, end = 0, 10
+        start, end = min(self.proposals.values()), max(self.commits.values())
+        #start, end = 0, 10
         duration = end - start
         print("duration: ", duration)
         #bytes = self.sizes
