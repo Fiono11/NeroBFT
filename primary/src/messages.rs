@@ -5,9 +5,26 @@ use ed25519_dalek::{Digest as _, Sha512};
 use config::Committee;
 use crypto::{Digest, Hash, PublicKey, Signature, SignatureService};
 use serde::{Deserialize, Serialize};
-use crate::elections::{BlockHash, ParentHash};
 use crate::ensure;
 use crate::error::{DagError, DagResult};
+
+#[derive(Debug, Clone, Eq, Hash, PartialEq, Serialize, Deserialize, Ord, PartialOrd)]
+pub struct BlockHash(pub Digest);
+
+#[derive(Debug, Clone, Eq, Hash, PartialEq, Serialize, Deserialize, Ord, PartialOrd)]
+pub struct ParentHash(pub Digest);
+
+impl AsRef<[u8]> for ParentHash {
+    fn as_ref(&self) -> &[u8] {
+        &self.0.as_ref()
+    }
+}
+
+impl AsRef<[u8]> for BlockHash {
+    fn as_ref(&self) -> &[u8] {
+        &self.0.as_ref()
+    }
+}
 
 pub type Batch = Vec<Transaction>;
 

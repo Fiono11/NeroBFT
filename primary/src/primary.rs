@@ -11,6 +11,7 @@ use std::error::Error;
 use ed25519_dalek::Keypair;
 use store::Store;
 use tokio::sync::mpsc::{channel, Sender};
+use crate::BlockHash;
 use crate::core::Core;
 use crate::messages::{Batch, Transaction};
 
@@ -38,6 +39,7 @@ impl Primary {
         committee: Committee,
         parameters: Parameters,
         store: Store,
+        tx_digest: Sender<BlockHash>,
     ) {
         // Write the parameters to the logs.
         parameters.log();
@@ -73,6 +75,7 @@ impl Primary {
                 .iter()
                 .map(|(name, addresses)| (*name, addresses.transactions))
                 .collect(),
+            tx_digest,
         );
 
         // NOTE: This log entry is used to compute performance.

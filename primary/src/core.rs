@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 //use store::Store;
 use tokio::sync::mpsc::{Receiver, Sender};
-use crate::{ensure, Transaction};
+use crate::{BlockHash, ensure, Transaction};
 use async_recursion::async_recursion;
 use ed25519_dalek::{Digest as _, Sha512};
 use std::net::SocketAddr;
@@ -25,7 +25,6 @@ use std::convert::TryFrom;
 use std::sync::mpsc::{channel, sync_channel};
 use config::Authority;
 use crate::messages::Vote;
-use crate::elections::BlockHash;
 use crate::primary::CHANNEL_CAPACITY;
 
 //#[cfg(test)]
@@ -57,11 +56,11 @@ pub struct Core {
     /// Election container
     elections: Election,
     /// Confirmed txs
-    confirmed_txs: BTreeSet<Transaction>,
+    confirmed_txs: BTreeSet<BlockHash>,
     /// Network delay
     network_delay: u64,
     counter: u64,
-    tx_transaction: Sender<Transaction>,
+    tx_digest: Sender<BlockHash>,
 }
 
 impl Core {
@@ -74,9 +73,9 @@ impl Core {
         max_batch_delay: u64,
         rx_transaction: Receiver<Transaction>,
         primary_addresses: Vec<(PublicKey, SocketAddr)>,
+        tx_digest: Sender<BlockHash>,
     ) {
         tokio::spawn(async move {
-            let (tx_transaction, _) = tokio::sync::mpsc::channel(CHANNEL_CAPACITY);
             Self {
                 name,
                 signature_service,
@@ -92,7 +91,7 @@ impl Core {
                 confirmed_txs: BTreeSet::new(),
                 network_delay: 0,
                 counter: 0,
-                tx_transaction,
+                tx_digest,
             }
             .run()
             .await;
@@ -132,7 +131,7 @@ impl Core {
                     };
 
                     // first time this transaction is seen
-                    /*if !self.elections.contains_key(&parent) {
+                    if !self.elections.contains_key(&parent) {
 
                         // tally votes of the transaction
                         for vote in &votes {
@@ -140,7 +139,7 @@ impl Core {
                                 // verify signature
                                 vote.verify(&self.committee);
                                 // add vote
-                                committee.authorities.insert(vote.author, Authority::new(committee.stake(&vote.author), committee.primary(&vote.author).unwrap()));
+                                committee.authorities.insert(vote.author, Authority::new(self.committee.stake(&vote.author), self.committee.primary(&vote.author).unwrap()));
                             }
                         }
 
@@ -164,7 +163,7 @@ impl Core {
                                     // verify signature
                                     vote.verify(&self.committee);
                                     // add vote
-                                    committee.authorities.insert(vote.author, Authority::new(committee.stake(&vote.author), committee.primary(&vote.author).unwrap()));
+                                    committee.authorities.insert(vote.author, Authority::new(self.committee.stake(&vote.author), self.committee.primary(&vote.author).unwrap()));
                                 }
                             }
                             self.elections.insert(parent.clone(), (committee.clone(), digest.clone()));
@@ -172,11 +171,11 @@ impl Core {
                     }
 
                     // check quorum
-                    if committee.total_stake() >= committee.quorum_threshold() {
-                        self.confirmed_txs.insert(transaction.clone());
+                    if committee.total_stake() >= committee.quorum_threshold() && !self.confirmed_txs.contains(&digest) {
+                        self.confirmed_txs.insert(digest.clone());
                         info!("Committed {:?} -> {:?}=", parent.clone(), digest.clone());
-                        self.tx_transaction.send(transaction).await;
-                    }*/
+                        self.tx_digest.send(digest.clone()).await;
+                    }
 
                     self.current_batch_size += payload.0.len();
                     self.current_batch.push(tx);

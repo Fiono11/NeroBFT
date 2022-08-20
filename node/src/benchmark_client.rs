@@ -115,22 +115,22 @@ impl Client {
         // NOTE: This log entry is used to compute performance.
         info!("Start sending transactions");
 
-        'main: loop {
+        //'main: loop {
             interval.as_mut().tick().await;
             let present = Instant::now();
 
-            for x in 0..burst {
-                if x == counter % burst {
+            for x in 0..self.rate {
+                /*if x == counter % burst {
                     // NOTE: This log entry is used to compute performance.
                     info!("Sending sample transaction {}", counter);
 
                     payload.put_u8(0u8); // Sample txs start with 0.
                     payload.put_u64(counter); // This counter identifies the tx.
-                } else {
+                } else {*/
                     r += 1;
                     payload.put_u8(1u8); // Standard txs start with 1.
                     payload.put_u64(r); // Ensures all clients send different txs.
-                };
+                //};
 
                 payload.resize(self.size, 0u8);
                 let bytes = payload.split().freeze();
@@ -143,7 +143,7 @@ impl Client {
 
                 if let Err(e) = transport.send(Bytes::from(transaction)).await {
                     warn!("Failed to send transaction: {}", e);
-                    break 'main;
+                    //break 'main;
                 }
             }
             if present.elapsed().as_millis() > BURST_DURATION as u128 {
@@ -151,7 +151,7 @@ impl Client {
                 warn!("Transaction rate too high for this client");
             }
             counter += 1;
-        }
+        //}
         Ok(())
     }
 

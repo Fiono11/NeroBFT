@@ -9,32 +9,15 @@ use std::thread::sleep;
 use std::time::SystemTime;
 use tokio::time::{self, Duration, Instant};
 use tokio::sync::{broadcast, Notify};
-use crate::ensure;
+use crate::{BlockHash, ensure};
 use bytes::Bytes;
 use log::debug;
 use serde::__private::de::TagOrContentField::Tag;
 use crate::error::DagError::InvalidHeaderId;
 use serde::{Serialize, Deserialize};
+use crate::messages::ParentHash;
 
 pub type Election = HashMap<ParentHash, (Committee, BlockHash)>;
-
-#[derive(Debug, Clone, Eq, Hash, PartialEq, Serialize, Deserialize, Ord, PartialOrd)]
-pub struct BlockHash(pub Digest);
-
-#[derive(Debug, Clone, Eq, Hash, PartialEq, Serialize, Deserialize, Ord, PartialOrd)]
-pub struct ParentHash(pub Digest);
-
-impl AsRef<[u8]> for ParentHash {
-    fn as_ref(&self) -> &[u8] {
-        &self.0.as_ref()
-    }
-}
-
-impl AsRef<[u8]> for BlockHash {
-    fn as_ref(&self) -> &[u8] {
-        &self.0.as_ref()
-    }
-}
 
 /// A wrapper around a `Db` instance. This exists to allow orderly cleanup
 /// of the `Db` by signalling the background purge task to shut down when

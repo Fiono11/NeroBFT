@@ -8,7 +8,7 @@ use log::info;
 use store::Store;
 use tokio::sync::mpsc::{channel, Receiver};
 use crypto::Digest;
-use primary::{Transaction, Primary};
+use primary::{Transaction, Primary, BlockHash};
 
 /// The default channel capacity.
 pub const CHANNEL_CAPACITY: usize = 1_000;
@@ -83,7 +83,7 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
     let store = Store::new(store_path).context("Failed to create a store")?;
 
     // Channels the sequence of certificates.
-    let (_tx_output, rx_output) = channel(CHANNEL_CAPACITY);
+    let (tx_output, rx_output) = channel(CHANNEL_CAPACITY);
 
     // Check whether to run a primary, a worker, or an entire authority.
     match matches.subcommand() {
@@ -94,6 +94,7 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
                 committee.clone(),
                 parameters.clone(),
                 store,
+                tx_output,
             );
         }
         _ => unreachable!(),
@@ -108,7 +109,7 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
 }
 
 /// Receives an ordered list of certificates and apply any application-specific logic.
-async fn analyze(mut rx_output: Receiver<Digest>) {
+async fn analyze(mut rx_output: Receiver<BlockHash>) {
     while let Some(tx) = rx_output.recv().await {
         // NOTE: Here goes the application logic.
         info!("Confirmed tx: {:#?}", tx);
