@@ -59,8 +59,6 @@ class LogParser:
         for i in range(1, p):
             assert sorted(l[0][0]) == sorted(l[i][0])
 
-        #self.commits = results
-
         self.commits = self._merge_results([x.items() for x in commits])
 
         #print("self commits: ", self.commits)

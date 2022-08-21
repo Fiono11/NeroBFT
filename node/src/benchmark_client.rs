@@ -104,6 +104,7 @@ impl Client {
         // Submit all transactions.
         let burst = self.rate / PRECISION;
         let mut tx = Transaction::new();
+        let mut txs = vec![];
         let mut payload = BytesMut::with_capacity(self.size);
         let mut r = rand::thread_rng().gen();
         let mut transport = Framed::new(stream, LengthDelimitedCodec::new());
@@ -137,7 +138,8 @@ impl Client {
                 tx.payload = Payload(bytes.to_vec());
                 tx.timestamp = now();
                 tx.parent = ParentHash(Digest::random());
-                let transaction = bincode::serialize(&tx).unwrap();
+                txs.push(tx.clone());
+                let transaction = bincode::serialize(&txs).unwrap();
 
                 if let Err(e) = transport.send(Bytes::from(transaction)).await {
                     warn!("Failed to send transaction: {}", e);

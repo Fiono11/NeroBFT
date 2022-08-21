@@ -84,7 +84,7 @@ impl Primary {
     }
 
     /// Spawn all tasks responsible to handle clients transactions.
-    fn handle_transactions(&self, tx_batch_maker: Sender<Transaction>) {
+    fn handle_transactions(&self, tx_batch_maker: Sender<Vec<Transaction>>) {
         // We first receive clients' transactions from the network.
         let mut address = self
             .committee
@@ -107,16 +107,16 @@ impl Primary {
 /// Defines how the network receiver handles incoming transactions.
 #[derive(Clone)]
 struct TxReceiverHandler {
-    tx_batch_maker: Sender<Transaction>,
+    tx_batch_maker: Sender<Vec<Transaction>>,
 }
 
 #[async_trait]
 impl MessageHandler for TxReceiverHandler {
     async fn dispatch(&self, _writer: &mut Writer, message: Bytes) -> Result<(), Box<dyn Error>> {
         // Send the transaction to the batch maker.
-        match bincode::deserialize::<Transaction>(&message) {
+        match bincode::deserialize::<Vec<Transaction>>(&message) {
             Ok(tx) => {
-                info!("Received {:?}", tx.digest().0);
+                //info!("Received {:?}", tx.digest().0);
                 self.tx_batch_maker
                     .send(tx)
                     .await

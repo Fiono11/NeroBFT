@@ -34,7 +34,7 @@ pub struct Core {
     /// The maximum delay after which to seal the batch (in ms).
     max_batch_delay: u64,
     /// Channel to receive transactions from the network.
-    rx_transaction: Receiver<Transaction>,
+    rx_transaction: Receiver<Vec<Transaction>>,
     /// The network addresses of the other primaries.
     primary_addresses: Vec<(PublicKey, SocketAddr)>,
     /// Holds the current batch.
@@ -61,7 +61,7 @@ impl Core {
         committee: Committee,
         batch_size: usize,
         max_batch_delay: u64,
-        rx_transaction: Receiver<Transaction>,
+        rx_transaction: Receiver<Vec<Transaction>>,
         primary_addresses: Vec<(PublicKey, SocketAddr)>,
         tx_digest: Sender<BlockHash>,
     ) {
@@ -96,58 +96,33 @@ impl Core {
         loop {
             tokio::select! {
                 // Assemble client transactions into batches of preset size.
-                Some(transaction) = self.rx_transaction.recv() => {
-                    /*self.counter += 1;
-                    //info!("tx {}: {:#?}", self.counter, transaction);
-                    // verify timestamp
-                    if now() > transaction.timestamp() + self.network_delay ||
-                        now() < transaction.timestamp() - self.network_delay {
-                            //continue;
-                    }*/
-
-                    // verify payload
-
-                    let votes = transaction.votes();
-                    let payload = &transaction.payload();
-                    let digest = transaction.digest();
-                    let parent = transaction.parent();
-                    let mut committee = Committee::empty();
-
-                    let mut tx = Transaction {
-                        timestamp: transaction.timestamp,
-                        payload: payload.clone(),
-                        parent: parent.clone(),
-                        votes: votes.clone(),
-                    };
-
-                    // first time this transaction is seen
-                    if !self.elections.contains_key(&parent) {
-
-                        // tally votes of the transaction
-                        for vote in &votes {
-                            if !committee.authorities.contains_key(&vote.author) {
-                                // verify signature
-                                vote.verify(&self.committee).unwrap();
-                                // add vote
-                                committee.authorities.insert(vote.author, Authority::new(self.committee.stake(&vote.author), self.committee.primary(&vote.author).unwrap()));
-                            }
-                        }
-
-                        // tally own vote
-                        let own_vote = Vote::new(digest.clone(), &self.name, &mut self.signature_service).await;
-
-                        self.elections.insert(parent.clone(), (committee.clone(), digest.clone()));
-
-                        tx.votes.insert(own_vote);
-                    }
-                    else {
-                        // check fork
-                        let (c, d) = self.elections.get(&parent).unwrap();
-                        if d != &digest {
+                Some(transactions) = self.rx_transaction.recv() => {
+                    for transaction in transactions {
+                        info!("Received {:?}", transaction.digest().0);
+                        // verify timestamp
+                        if now() > transaction.timestamp() + self.network_delay ||
+                            now() < transaction.timestamp() - self.network_delay {
                             //continue;
                         }
-                        else {
-                            // check that all votes of the transaction are already tallied
+
+                        // verify payload
+
+                        let votes = transaction.votes();
+                        let payload = &transaction.payload();
+                        let digest = transaction.digest();
+                        let parent = transaction.parent();
+                        let mut committee = Committee::empty();
+
+                        let mut tx = Transaction {
+                            timestamp: transaction.timestamp,
+                            payload: payload.clone(),
+                            parent: parent.clone(),
+                            votes: votes.clone(),
+                        };
+
+                        // first time this transaction is seen
+                        if !self.elections.contains_key(&parent) {
+                            // tally votes of the transaction
                             for vote in &votes {
                                 if !committee.authorities.contains_key(&vote.author) {
                                     // verify signature
@@ -156,22 +131,47 @@ impl Core {
                                     committee.authorities.insert(vote.author, Authority::new(self.committee.stake(&vote.author), self.committee.primary(&vote.author).unwrap()));
                                 }
                             }
+
+                            // tally own vote
+                            let own_vote = Vote::new(digest.clone(), &self.name, &mut self.signature_service).await;
+
                             self.elections.insert(parent.clone(), (committee.clone(), digest.clone()));
+
+                            tx.votes.insert(own_vote);
                         }
-                    }
+                        else {
+                            // check fork
+                            let (c, d) = self.elections.get(&parent).unwrap();
+                            if d != &digest {
+                                //continue;
+                            }
+                            else {
+                                // check that all votes of the transaction are already tallied
+                                for vote in &votes {
+                                    if !committee.authorities.contains_key(&vote.author) {
+                                        // verify signature
+                                        vote.verify(&self.committee).unwrap();
+                                        // add vote
+                                        committee.authorities.insert(vote.author, Authority::new(self.committee.stake(&vote.author), self.committee.primary(&vote.author).unwrap()));
+                                    }
+                                }
+                                self.elections.insert(parent.clone(), (committee.clone(), digest.clone()));
+                            }
+                        }
 
-                    // check quorum
-                    if committee.total_stake() >= committee.quorum_threshold() && !self.confirmed_txs.contains(&digest) {
-                        self.confirmed_txs.insert(digest.clone());
-                        info!("Committed {:?} -> {:?}", parent.clone(), digest.0.clone());
-                        //self.tx_digest.send(digest.clone()).await;
-                    }
+                        // check quorum
+                        if committee.total_stake() >= committee.quorum_threshold() && !self.confirmed_txs.contains(&digest) {
+                            self.confirmed_txs.insert(digest.clone());
+                            info!("Committed {:?} -> {:?}", parent.clone(), digest.0.clone());
+                            //self.tx_digest.send(digest.clone()).await;
+                        }
 
-                    self.current_batch_size += payload.0.len();
-                    self.current_batch.push(tx);
-                    if self.current_batch_size >= self.batch_size {
-                        self.seal().await;
-                        timer.as_mut().reset(Instant::now() + Duration::from_millis(self.max_batch_delay));
+                        self.current_batch_size += payload.0.len();
+                        self.current_batch.push(tx);
+                        if self.current_batch_size >= self.batch_size {
+                            self.seal().await;
+                            timer.as_mut().reset(Instant::now() + Duration::from_millis(self.max_batch_delay));
+                        }
                     }
                 },
 
@@ -206,8 +206,8 @@ impl Core {
         // Serialize the batch.
         self.current_batch_size = 0;
         let batch: Vec<_> = self.current_batch.drain(..).collect();
-        for tx in batch {
-            let serialized = bincode::serialize(&tx).expect("Failed to serialize our own batch");
+        //for tx in batch {
+            let serialized = bincode::serialize(&batch).expect("Failed to serialize our own batch");
             // Broadcast the batch through the network.
             let (names, addresses): (Vec<PublicKey>, Vec<SocketAddr>) = self.primary_addresses.iter().cloned().unzip();
             /*for vote in &tx.votes {
@@ -219,11 +219,11 @@ impl Core {
             info!("addresses: {:#?}", addresses);
             if !addresses.is_empty() {
                let handlers = self.network.broadcast(addresses, bytes).await;
-               info!("tx sent: {:#?}", tx);
+               info!("batch sent: {:#?}", batch);
             }
 
-            info!("Batch {:?} contains {} B", tx.digest().0, serialized.len());
-        }
+            info!("Batch {:?} contains {} B", batch[0].digest().0, serialized.len());
+        //}
 
         /*#[cfg(feature = "benchmark")]
         {
