@@ -47,14 +47,14 @@ class LogParser:
             raise ParseError(f'Failed to parse nodes\' logs: {e}')
         proposals, commits, sizes = zip(*results)
 
-        print("results: ", results)
+        #print("results: ", results)
 
         p = len(primaries)
 
         l = numpy.array_split(commits, p)
 
-        print("l1: ", l[0][0])
-        print("l2: ", l[1][0])
+        #print("l1: ", l[0][0])
+        #print("l2: ", l[1][0])
 
         for i in range(1, p):
             assert sorted(l[0][0]) == sorted(l[i][0])
@@ -63,33 +63,19 @@ class LogParser:
 
         self.commits = self._merge_results([x.items() for x in commits])
 
-        print("self commits: ", self.commits)
+        #print("self commits: ", self.commits)
+
+        #print("sizes2: ", sizes)
 
         self.proposals = self._merge_results([x.items() for x in proposals])
 
-        print("self proposals: ", self.proposals)
+        #print("self proposals: ", self.proposals)
 
         self.sizes = {
             k: v for x in sizes for k, v in x.items() if k in self.commits
         }
 
-        #length = len(self.commits)
-
-        #middle_index = length // len(primaries)
-
-        #first_half = l[:middle_index]
-        #second_half = l[middle_index:]
-
-        #assert first_half == second_half
-
-        #self.proposals = self._merge_results([x.items() for x in proposals])
-        #self.commits = self._merge_results([x.items() for x in commits])
-        #self.sizes = {
-            #k: v for x in sizes for k, v in x.items() if k in self.commits
-        #}
-
-        #self.sizes = len(commits[0])
-        #print("sized: ", self.sizes)
+        #print("self sizes: ", self.sizes)
 
         # Check whether clients missed their target rate.
         if self.misses != 0:
@@ -136,15 +122,17 @@ class LogParser:
         tmp = findall(r'\[(.*Z) .* Received ([^ ]+\=)', log)
         tmp = [(d, self._to_posix(t)) for t, d in tmp]
         proposals = self._merge_results([tmp])
-        print("proposals: ", proposals)
+        #print("proposals: ", proposals)
 
         tmp1 = findall(r'\[(.*Z) .* Committed ParentHash\([^ ]+\) -> ([^ ]+=)', log)
         tmp1 = [(d, self._to_posix(t)) for t, d in tmp1]
         commits = self._merge_results([tmp1])
-        print("commits: ", commits)
+        #print("commits: ", commits)
 
         tmp2 = findall(r'Batch ([^ ]+) contains (\d+) B', log)
         sizes = {d: int(s) for d, s in tmp2}
+
+        #print("sizes: ", sizes)
 
         return proposals, commits, sizes
 
@@ -160,6 +148,9 @@ class LogParser:
         bytes = sum(self.sizes.values())
         bps = bytes / duration
         tps = bps / self.size[0]
+        #print("duration: ", duration)
+        #print("bytes: ", bytes)
+        #print("size: ", self.size[0])
         return tps, bps, duration
 
     def _consensus_latency(self):

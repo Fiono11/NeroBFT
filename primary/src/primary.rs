@@ -123,7 +123,7 @@ impl MessageHandler for TxReceiverHandler {
         // Send the transaction to the batch maker.
         match bincode::deserialize::<Transaction>(&message) {
             Ok(tx) => {
-                info!("Received {:?}=", tx.digest().0);
+                info!("Received {:?}", tx.digest().0);
                 self.tx_batch_maker
                     .send(tx)
                     .await
