@@ -7,8 +7,7 @@ use env_logger::Env;
 use log::info;
 use store::Store;
 use tokio::sync::mpsc::{channel, Receiver};
-use crypto::Digest;
-use primary::{Transaction, Primary, BlockHash};
+use primary::{Primary, BlockHash};
 
 /// The default channel capacity.
 pub const CHANNEL_CAPACITY: usize = 1_000;

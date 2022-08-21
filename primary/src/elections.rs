@@ -1,20 +1,11 @@
-// Copyright(C) Facebook, Inc. and its affiliates.
-use crate::error::{DagError, DagResult};
-use config::{Committee, Stake};
-use crypto::Hash as _;
-use crypto::{Digest, PublicKey, Signature};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use config::Committee;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
-use std::thread::sleep;
-use std::time::SystemTime;
 use tokio::time::{self, Duration, Instant};
 use tokio::sync::{broadcast, Notify};
-use crate::{BlockHash, ensure};
+use crate::BlockHash;
 use bytes::Bytes;
 use log::debug;
-use serde::__private::de::TagOrContentField::Tag;
-use crate::error::DagError::InvalidHeaderId;
-use serde::{Serialize, Deserialize};
 use crate::messages::ParentHash;
 
 pub type Election = HashMap<ParentHash, (Committee, BlockHash)>;

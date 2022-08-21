@@ -1,31 +1,21 @@
-use crate::error::{DagError, DagResult};
 use bytes::Bytes;
 use config::Committee;
-use crypto::{Digest, Hash};
 use crypto::{PublicKey, SignatureService};
-use log::{debug, error, info, warn};
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::convert::TryInto;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use log::info;
+use std::collections::{BTreeSet, HashMap};
 //use store::Store;
 use tokio::sync::mpsc::{Receiver, Sender};
-use crate::{BlockHash, ensure, Transaction};
-use async_recursion::async_recursion;
-use ed25519_dalek::{Digest as _, Sha512};
+use crate::{BlockHash, Transaction};
 use std::net::SocketAddr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use serde::__private::de::TagOrContentField::Tag;
 use tokio::time::{Instant, sleep};
-use tracing::field::debug;
-use network::{CancelHandler, ReliableSender, SimpleSender};
+use network::SimpleSender;
 use crate::elections::Election;
 use crate::messages::Batch;
-use std::convert::TryFrom;
-use std::sync::mpsc::{channel, sync_channel};
 use config::Authority;
 use crate::messages::Vote;
-use crate::primary::CHANNEL_CAPACITY;
+use crypto::Digest;
+use std::convert::TryFrom;
 
 //#[cfg(test)]
 //#[path = "tests/batch_maker_tests.rs"]
@@ -117,7 +107,7 @@ impl Core {
 
                     // verify payload
 
-                    let mut votes = transaction.votes();
+                    let votes = transaction.votes();
                     let payload = &transaction.payload();
                     let digest = BlockHash(Digest::try_from(&payload.0[..]).unwrap());
                     let parent = transaction.parent();
@@ -137,7 +127,7 @@ impl Core {
                         for vote in &votes {
                             if !committee.authorities.contains_key(&vote.author) {
                                 // verify signature
-                                vote.verify(&self.committee);
+                                vote.verify(&self.committee).unwrap();
                                 // add vote
                                 committee.authorities.insert(vote.author, Authority::new(self.committee.stake(&vote.author), self.committee.primary(&vote.author).unwrap()));
                             }
@@ -161,7 +151,7 @@ impl Core {
                             for vote in &votes {
                                 if !committee.authorities.contains_key(&vote.author) {
                                     // verify signature
-                                    vote.verify(&self.committee);
+                                    vote.verify(&self.committee).unwrap();
                                     // add vote
                                     committee.authorities.insert(vote.author, Authority::new(self.committee.stake(&vote.author), self.committee.primary(&vote.author).unwrap()));
                                 }
@@ -219,7 +209,7 @@ impl Core {
         for tx in batch {
             let serialized = bincode::serialize(&tx).expect("Failed to serialize our own batch");
             // Broadcast the batch through the network.
-            let (names, mut addresses): (Vec<PublicKey>, Vec<SocketAddr>) = self.primary_addresses.iter().cloned().unzip();
+            let (names, addresses): (Vec<PublicKey>, Vec<SocketAddr>) = self.primary_addresses.iter().cloned().unzip();
             /*for vote in &tx.votes {
                 if let Some(p) = names.iter().position(|&r| r == vote.author) {
                     addresses.remove(p);

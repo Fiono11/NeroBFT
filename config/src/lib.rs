@@ -3,7 +3,7 @@ use crypto::{generate_production_keypair, PublicKey, SecretKey};
 use log::info;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::BufWriter;
 use std::io::Write as _;

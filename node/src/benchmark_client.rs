@@ -6,10 +6,9 @@ use clap::{crate_name, crate_version, App, AppSettings};
 use env_logger::Env;
 use futures::future::join_all;
 use futures::sink::SinkExt as _;
-use log::{debug, info, warn};
+use log::{info, warn};
 use rand::Rng;
 use std::net::SocketAddr;
-use bincode::serialize;
 use tokio::net::TcpStream;
 use tokio::time::{interval, sleep, Duration, Instant};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
@@ -106,7 +105,6 @@ impl Client {
         let burst = self.rate / PRECISION;
         let mut tx = Transaction::new();
         let mut payload = BytesMut::with_capacity(self.size);
-        let mut counter = 0;
         let mut r = rand::thread_rng().gen();
         let mut transport = Framed::new(stream, LengthDelimitedCodec::new());
         let interval = interval(Duration::from_millis(BURST_DURATION));
@@ -139,7 +137,7 @@ impl Client {
                 tx.payload = Payload(p);
                 tx.timestamp = now();
                 tx.parent = ParentHash(Digest::random());
-                let transaction = bincode::serialize(&tx).unwrap();;
+                let transaction = bincode::serialize(&tx).unwrap();
 
                 if let Err(e) = transport.send(Bytes::from(transaction)).await {
                     warn!("Failed to send transaction: {}", e);
@@ -150,7 +148,6 @@ impl Client {
                 // NOTE: This log entry is used to compute performance.
                 warn!("Transaction rate too high for this client");
             }
-            counter += 1;
         //}
         Ok(())
     }

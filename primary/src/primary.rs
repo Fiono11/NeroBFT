@@ -2,22 +2,15 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use config::{Committee, Parameters, KeyPair};
-use crypto::{Digest, PublicKey, SignatureService};
-use futures::sink::SinkExt as _;
-use log::{error, info, warn};
+use crypto::SignatureService;
+use log::{info, warn};
 use network::{MessageHandler, Receiver, Writer};
-use serde::{Deserialize, Serialize};
 use std::error::Error;
-use ed25519_dalek::Keypair;
 use store::Store;
 use tokio::sync::mpsc::{channel, Sender};
 use crate::BlockHash;
 use crate::core::Core;
-use crate::messages::{Batch, Transaction};
-
-//#[cfg(test)]
-//#[path = "tests/worker_tests.rs"]
-//pub mod worker_tests;
+use crate::messages::Transaction;
 
 /// The default channel capacity for each channel of the worker.
 pub const CHANNEL_CAPACITY: usize = 1_000;
