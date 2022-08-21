@@ -1,12 +1,12 @@
 {
     "authorities": {
-        "2n84+dSP+tO6WiXs7cNvY4fZv7bLPBjU6z0hREO6J9I=": {
+        "eZxrKxyA0JZaAt5yqS8yK7pe3XF9XtHS2nbkyB8+QFk=": {
             "primary": {
                 "transactions": "127.0.0.1:3003"
             },
             "stake": 1
         },
-        "E9Ix0gn+McCOjII75kL2VFkVoufMLRyhIJ4D95c8F8I=": {
+        "otUj4O4hoUOK8LZfawuwl5I2MhLDALuGneTjmVpl0Rg=": {
             "primary": {
                 "transactions": "127.0.0.1:3001"
             },

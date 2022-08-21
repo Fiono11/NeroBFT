@@ -45,16 +45,19 @@ class LogParser:
                 results = p.map(self._parse_primaries, primaries)
         except (ValueError, IndexError, AttributeError) as e:
             raise ParseError(f'Failed to parse nodes\' logs: {e}')
-        proposals, commits = zip(*results)
+        proposals, commits, sizes = zip(*results)
 
         print("results: ", results)
 
-        l = numpy.array_split(commits, len(primaries))
+        p = len(primaries)
+
+        l = numpy.array_split(commits, p)
 
         print("l1: ", l[0][0])
         print("l2: ", l[1][0])
 
-        assert sorted(l[0][0]) == sorted(l[1][0])
+        for i in range(1, p):
+            assert sorted(l[0][0]) == sorted(l[i][0])
 
         #self.commits = results
 
@@ -65,6 +68,10 @@ class LogParser:
         self.proposals = self._merge_results([x.items() for x in proposals])
 
         print("self proposals: ", self.proposals)
+
+        self.sizes = {
+            k: v for x in sizes for k, v in x.items() if k in self.commits
+        }
 
         #length = len(self.commits)
 
@@ -132,52 +139,28 @@ class LogParser:
         print("proposals: ", proposals)
 
         tmp1 = findall(r'\[(.*Z) .* Committed ParentHash\([^ ]+\) -> ([^ ]+=)', log)
-        tmp2 = [(d, self._to_posix(t)) for t, d in tmp1]
-        commits = self._merge_results([tmp2])
-        print("tmp2: ", tmp2)
+        tmp1 = [(d, self._to_posix(t)) for t, d in tmp1]
+        commits = self._merge_results([tmp1])
         print("commits: ", commits)
 
-        return proposals, commits
+        tmp2 = findall(r'Batch ([^ ]+) contains (\d+) B', log)
+        sizes = {d: int(s) for d, s in tmp2}
+
+        return proposals, commits, sizes
 
     def _to_posix(self, string):
         x = datetime.fromisoformat(string.replace('Z', '+00:00'))
         return datetime.timestamp(x)
 
-    #def _consensus_throughput(self):
-        #if not self.commits:
-            #return 0, 0, 0
-        #print("first_receive: ", self.first_receive[-1][1][1])
-        #start = int(self.first_receive[-1][1][1])
-        #end = int(self.commits[-1][1][1])
-        #print("commits: ", self.commits[-1][1][1])
-        #print("latest commmit: ", self.commits[-1][1][1])
-        #a = datetime.fromtimestamp(start)
-        #b = datetime.fromtimestamp(end)
-        #print(a)
-        #print(b)
-        #duration = datetime.fromtimestamp(end - start)
-        #bytes = sum(self.sizes.values())
-        #bps = bytes / duration
-        #tps = bps / self.size[0]
-        #bps = 0
-        #print(len(self.commits[0]))
-        #print(duration)
-        #tps = len(self.commits[0]) / int(duration)
-        #return tps, bps, duration
-
     def _consensus_throughput(self):
         if not self.commits:
             return 0, 0, 0
         start, end = min(self.proposals.values()), max(self.commits.values())
-        #start, end = 0, 10
         duration = end - start
-        print("duration: ", duration)
-        #bytes = self.sizes
-        #print("bytes: ", bytes)
-        #bps = bytes / duration
-        #tps = bps / self.size[0]
-        tps = len(self.commits) / duration
-        return tps, tps, duration
+        bytes = sum(self.sizes.values())
+        bps = bytes / duration
+        tps = bps / self.size[0]
+        return tps, bps, duration
 
     def _consensus_latency(self):
         latency = [c - self.proposals[d] for d, c in self.commits.items()]
@@ -237,7 +220,7 @@ class LogParser:
             '\n'
             ' + RESULTS:\n'
             f' Consensus TPS: {round(consensus_tps):,} tx/s\n'
-            #f' Consensus BPS: {round(consensus_bps):,} B/s\n'
+            f' Consensus BPS: {round(consensus_bps):,} B/s\n'
             f' Consensus latency: {consensus_latency:,} ms\n'
             #'\n'
             #f' End-to-end TPS: {round(end_to_end_tps):,} tx/s\n'

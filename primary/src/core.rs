@@ -231,6 +231,8 @@ impl Core {
                let handlers = self.network.broadcast(addresses, bytes).await;
                info!("tx sent: {:#?}", tx);
             }
+
+            info!("Batch {:?} contains {} B", tx.digest().0, serialized.len());
         }
 
         /*#[cfg(feature = "benchmark")]
@@ -252,17 +254,8 @@ impl Core {
             }
 
             // NOTE: This log entry is used to compute performance.
-            //info!("Batch {:?} contains {} B", digest, size);
+            info!("Batch {:?} contains {} B", digest, size);
         }*/
-
-        // Send the batch through the deliver channel for further processing.
-        /*self.tx_message
-            .send(QuorumWaiterMessage {
-                batch: serialized,
-                handlers: names.into_iter().zip(handlers.into_iter()).collect(),
-            })
-            .await
-            .expect("Failed to deliver batch");*/
     }
 }
 
