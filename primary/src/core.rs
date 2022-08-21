@@ -173,7 +173,7 @@ impl Core {
                     // check quorum
                     if committee.total_stake() >= committee.quorum_threshold() && !self.confirmed_txs.contains(&digest) {
                         self.confirmed_txs.insert(digest.clone());
-                        info!("Committed {:?} -> {:?}=", parent.clone(), digest.clone());
+                        info!("Committed {:?} -> {:?}=", parent.clone(), digest.0.clone());
                         //self.tx_digest.send(digest.clone()).await;
                     }
 

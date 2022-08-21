@@ -126,7 +126,7 @@ class LogParser:
         if search(r'(?:panicked|Error)', log) is not None:
             raise ParseError('Primary(s) panicked')
 
-        tmp = findall(r'\[(.*Z) .* Received BlockHash([^ ]+\=)', log)
+        tmp = findall(r'\[(.*Z) .* Received ([^ ]+\=)', log)
         tmp = [(d, self._to_posix(t)) for t, d in tmp]
         proposals = self._merge_results([tmp])
         print("proposals: ", proposals)
@@ -180,8 +180,8 @@ class LogParser:
         return tps, tps, duration
 
     def _consensus_latency(self):
-        latency = [c for c in self.commits.items()]
-        return latency if latency else 0
+        latency = [c - self.proposals[d] for d, c in self.commits.items()]
+        return mean(latency) if latency else 0
 
     def _end_to_end_throughput(self):
         if not self.commits:
@@ -213,7 +213,7 @@ class LogParser:
         #batch_size = self.configs[0]['batch_size']
         #max_batch_delay = self.configs[0]['max_batch_delay']
 
-        #consensus_latency = self._consensus_latency() * 1_000
+        consensus_latency = self._consensus_latency() * 1_000
         consensus_tps, consensus_bps, duration = self._consensus_throughput()
         #end_to_end_tps, end_to_end_bps, duration = self._end_to_end_throughput()
         #end_to_end_latency = self._end_to_end_latency() * 1_000
@@ -238,7 +238,7 @@ class LogParser:
             ' + RESULTS:\n'
             f' Consensus TPS: {round(consensus_tps):,} tx/s\n'
             #f' Consensus BPS: {round(consensus_bps):,} B/s\n'
-            #f' Consensus latency: {consensus_latency:,} ms\n'
+            f' Consensus latency: {consensus_latency:,} ms\n'
             #'\n'
             #f' End-to-end TPS: {round(end_to_end_tps):,} tx/s\n'
             #f' End-to-end BPS: {round(end_to_end_bps):,} B/s\n'
