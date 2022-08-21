@@ -132,9 +132,9 @@ impl Client {
 
                 payload.resize(self.size, 0u8);
                 let bytes = payload.split().freeze();
-                let mut p = [0; 32];
-                p.copy_from_slice(&bytes.to_vec()[..]);
-                tx.payload = Payload(p);
+                //let mut p = [0; 32];
+                //p.copy_from_slice(&bytes.to_vec()[..]);
+                tx.payload = Payload(bytes.to_vec());
                 tx.timestamp = now();
                 tx.parent = ParentHash(Digest::random());
                 let transaction = bincode::serialize(&tx).unwrap();

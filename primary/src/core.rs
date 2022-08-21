@@ -109,7 +109,7 @@ impl Core {
 
                     let votes = transaction.votes();
                     let payload = &transaction.payload();
-                    let digest = BlockHash(Digest::try_from(&payload.0[..]).unwrap());
+                    let digest = transaction.digest();
                     let parent = transaction.parent();
                     let mut committee = Committee::empty();
 

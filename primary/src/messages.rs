@@ -29,7 +29,7 @@ impl AsRef<[u8]> for BlockHash {
 pub type Batch = Vec<Transaction>;
 
 #[derive(Debug, Hash, PartialEq, Default, Eq, Clone, Deserialize, Serialize, Ord, PartialOrd)]
-pub struct Payload(pub [u8; 32]);
+pub struct Payload(pub Vec<u8>);
 
 #[derive(Clone, Serialize, Deserialize, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Transaction {
@@ -43,7 +43,7 @@ impl Transaction {
     pub fn new() -> Self {
         Self {
             timestamp: 0,
-            payload: Payload([0; 32]),
+            payload: Payload(vec![]),
             parent: ParentHash(Digest::default()),
             votes: BTreeSet::new(),
         }
@@ -66,7 +66,12 @@ impl Transaction {
     }
 
     pub fn digest(&self) -> BlockHash {
-        BlockHash(Digest::try_from(&self.payload.0[..]).unwrap())
+        let digest = Digest(
+            Sha512::digest(&self.payload.0[..]).as_slice()[..32]
+                .try_into()
+                .unwrap(),
+        );
+        BlockHash(digest)
     }
 }
 
