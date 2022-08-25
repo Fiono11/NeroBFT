@@ -6,13 +6,15 @@ const NUMBER_OF_NODES: usize = 4;
 const NUMBER_OF_BYZANTINE_NODES: usize = (NUMBER_OF_NODES - 1) / 3;
 const NUMBER_OF_HONEST_NODES: usize = NUMBER_OF_NODES - NUMBER_OF_BYZANTINE_NODES;
 const QUORUM: usize = NUMBER_OF_BYZANTINE_NODES * 2 + 1;
+const TOTAL_TXS: usize = 1000;
 
 fn main() {
     println!("nodes: {}", NUMBER_OF_NODES);
     println!("honest nodes: {}", NUMBER_OF_HONEST_NODES);
     println!("byzantine nodes: {}", NUMBER_OF_BYZANTINE_NODES);
     println!("quorum: {}", QUORUM);
-    for _ in 0..1
+    let mut total_confirmed = 0;
+    for _ in 0..TOTAL_TXS
     {
         let mut r1_votes: HashMap<usize, Vec<i32>> = HashMap::new();
         let mut decided: HashMap<usize, Vec<i32>> = HashMap::new();
@@ -41,7 +43,7 @@ fn main() {
                     //let vote = v1.choose_weighted(&mut rand::thread_rng(), |item| item.1).unwrap().0;
                     /// There is a probability of a vote of an honest node to be -1 because it was lost or delayed
                     for j in 0..NUMBER_OF_NODES {
-                        let v = vec![(votes[i], 10), (-1, 0)];
+                        let v = vec![(votes[i], 1), (-1, 1)];
                         let r = v.choose_weighted(&mut rand::thread_rng(), |item| item.1).unwrap().0;
                         votes1.push(r);
                     }
@@ -148,11 +150,15 @@ fn main() {
                 }
             }
             if decided.len() == NUMBER_OF_HONEST_NODES {
-                assert!(decided.iter().all(|(a, b)| b == decided.get(&0).unwrap()));
+                let d = decided.get(&0).unwrap();
+                assert!(decided.iter().all(|(a, b)| b == d));
                 println!("Consensus achieved!");
-                println!("{} txs confirmed!", confirmed);
+                if d[0] == 1 {
+                    total_confirmed += 1;
+                }
                 break;
             }
         }
     }
+    println!("{} out of {} txs confirmed!", total_confirmed, TOTAL_TXS);
 }
