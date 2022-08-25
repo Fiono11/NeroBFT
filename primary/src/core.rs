@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use config::Committee;
 use crypto::{PublicKey, SignatureService};
-use log::info;
+use log::{info, warn};
 use std::collections::{BTreeSet, HashMap};
 //use store::Store;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -79,7 +79,7 @@ impl Core {
                 network: SimpleSender::new(),
                 elections: HashMap::new(),
                 confirmed_txs: BTreeSet::new(),
-                network_delay: 0,
+                network_delay: 200,
                 counter: 0,
                 tx_digest,
             }
@@ -102,7 +102,8 @@ impl Core {
                         // verify timestamp
                         if now() > transaction.timestamp() + self.network_delay ||
                             now() < transaction.timestamp() - self.network_delay {
-                            //continue;
+                            warn!("Tx {:?} has invalid timestamp: now -> {:?} vs t -> {:?}", transaction.digest().0, now(), transaction.timestamp());
+                            break;
                         }
 
                         // verify payload
@@ -143,7 +144,8 @@ impl Core {
                             // check fork
                             let (c, d) = self.elections.get(&parent).unwrap();
                             if d != &digest {
-                                //continue;
+                                warn!("Fork detected!");
+                                break;
                             }
                             else {
                                 // check that all votes of the transaction are already tallied
@@ -194,15 +196,6 @@ impl Core {
         #[cfg(feature = "benchmark")]
         let size = self.current_batch_size;
 
-        // Look for sample txs (they all start with 0) and gather their txs id (the next 8 bytes).
-        /*#[cfg(feature = "benchmark")]
-        let tx_ids: Vec<_> = self
-            .current_batch
-            .iter()
-            .filter(|tx| tx.payload.0[0] == 0u8 && tx.payload.0.len() > 8)
-            .filter_map(|tx| tx.payload.0[1..9].try_into().ok())
-            .collect();*/
-
         // Serialize the batch.
         self.current_batch_size = 0;
         let batch: Vec<_> = self.current_batch.drain(..).collect();
@@ -216,36 +209,13 @@ impl Core {
                 }
             }*/
             let bytes = Bytes::from(serialized.clone());
-            info!("addresses: {:#?}", addresses);
             if !addresses.is_empty() {
-               let handlers = self.network.broadcast(addresses, bytes).await;
-               info!("batch sent: {:#?}", batch);
+                info!("batch sent to {:?}: {:?}", addresses, batch);
+                let handlers = self.network.broadcast(addresses, bytes).await;
             }
 
             info!("Batch {:?} contains {} B", batch[0].digest().0, serialized.len());
         //}
-
-        /*#[cfg(feature = "benchmark")]
-        {
-            // NOTE: This is one extra hash that is only needed to print the following log entries.
-            let digest = Digest(
-                Sha512::digest(&serialized).as_slice()[..32]
-                    .try_into()
-                    .unwrap(),
-            );
-
-            for id in tx_ids {
-                // NOTE: This log entry is used to compute performance.
-                info!(
-                    "Batch {:?} contains sample tx {}",
-                    digest,
-                    u64::from_be_bytes(id)
-                );
-            }
-
-            // NOTE: This log entry is used to compute performance.
-            info!("Batch {:?} contains {} B", digest, size);
-        }*/
     }
 }
 

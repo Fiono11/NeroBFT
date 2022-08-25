@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
+use std::fmt::Write;
 use ed25519_dalek::{Digest as _, Sha512};
 use config::Committee;
 use crypto::{Digest, Hash, PublicKey, Signature, SignatureService};
@@ -31,12 +32,24 @@ pub type Batch = Vec<Transaction>;
 #[derive(Debug, Hash, PartialEq, Default, Eq, Clone, Deserialize, Serialize, Ord, PartialOrd)]
 pub struct Payload(pub Vec<u8>);
 
-#[derive(Clone, Serialize, Deserialize, Debug, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Transaction {
     pub timestamp: u64,
     pub payload: Payload,
     pub parent: ParentHash,
     pub votes: BTreeSet<Vote>,
+}
+
+impl fmt::Debug for Transaction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Tx {:?}: ", self.digest().0);
+        f.debug_tuple("")
+            .field(&self.timestamp)
+            .field(&self.payload)
+            .field(&self.parent)
+            .field(&self.votes)
+            .finish()
+    }
 }
 
 impl Transaction {

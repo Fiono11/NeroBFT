@@ -106,7 +106,8 @@ impl Client {
         let mut tx = Transaction::new();
         let mut txs = vec![];
         let mut payload = BytesMut::with_capacity(self.size);
-        let mut r = rand::thread_rng().gen();
+        //let mut r = rand::thread_rng().gen();
+        let mut r = 0;
         let mut transport = Framed::new(stream, LengthDelimitedCodec::new());
         let interval = interval(Duration::from_millis(BURST_DURATION));
         tokio::pin!(interval);
@@ -137,14 +138,17 @@ impl Client {
                 //p.copy_from_slice(&bytes.to_vec()[..]);
                 tx.payload = Payload(bytes.to_vec());
                 tx.timestamp = now();
-                tx.parent = ParentHash(Digest::random());
+                tx.parent = ParentHash(Digest::default());
                 txs.push(tx.clone());
                 let transaction = bincode::serialize(&txs).unwrap();
 
                 if let Err(e) = transport.send(Bytes::from(transaction)).await {
                     warn!("Failed to send transaction: {}", e);
                     //break 'main;
+                    break;
                 }
+
+                info!("Sent txs: {:?}", txs);
             }
             if present.elapsed().as_millis() > BURST_DURATION as u128 {
                 // NOTE: This log entry is used to compute performance.
