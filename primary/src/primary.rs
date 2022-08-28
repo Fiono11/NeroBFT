@@ -4,13 +4,15 @@ use bytes::Bytes;
 use config::{Committee, Parameters, KeyPair};
 use crypto::SignatureService;
 use log::{info, warn};
-use network::{MessageHandler, Receiver, Writer};
+use network::{MessageHandler, Writer, Receiver as SimpleReceiver};
 use std::error::Error;
+use futures::task::SpawnExt;
 use store::Store;
-use tokio::sync::mpsc::{channel, Sender};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use crate::BlockHash;
 use crate::core::Core;
-use crate::messages::{Transaction, Vote};
+use crate::error::DagError;
+use crate::messages::{PrimaryMessage, Transaction, Vote};
 
 /// The default channel capacity for each channel of the worker.
 pub const CHANNEL_CAPACITY: usize = 1_000;
@@ -34,7 +36,6 @@ impl Primary {
         committee: Committee,
         parameters: Parameters,
         store: Store,
-        tx_votes: Sender<Vote>,
         byzantine_node: bool,
     ) {
         // Write the parameters to the logs.
@@ -49,10 +50,11 @@ impl Primary {
             byzantine_node,
         };
 
-        let (tx_batch_maker, rx_batch_maker) = channel(CHANNEL_CAPACITY);
+        let (tx_transactions, rx_batch_maker) = channel(CHANNEL_CAPACITY);
+        let (tx_votes, rx_votes) = channel(CHANNEL_CAPACITY);
 
         // Spawn all primary tasks.
-        primary.handle_transactions(tx_batch_maker);
+        primary.messages(tx_transactions, tx_votes);
 
         // The `SignatureService` is used to require signatures on specific digests.
         let signature_service = SignatureService::new(keypair.secret.clone());
@@ -72,7 +74,7 @@ impl Primary {
                 .iter()
                 .map(|(name, addresses)| (*name, addresses.transactions))
                 .collect(),
-            tx_votes,
+            rx_votes,
             byzantine_node,
         );
 
@@ -96,7 +98,7 @@ impl Primary {
     }
 
     /// Spawn all tasks responsible to handle clients transactions.
-    fn handle_transactions(&self, tx_batch_maker: Sender<Vec<Transaction>>) {
+    fn messages(&self, tx_batch_maker: Sender<Vec<Transaction>>, tx_votes: Sender<Vote>) {
         // We first receive clients' transactions from the network.
         let mut address = self
             .committee
@@ -104,9 +106,9 @@ impl Primary {
             .expect("Our public key is not in the committee")
             .transactions;
         address.set_ip("127.0.0.1".parse().unwrap());
-        Receiver::spawn(
+        SimpleReceiver::spawn(
             address,
-            /* handler */ TxReceiverHandler { tx_batch_maker },
+            /* handler */ TxReceiverHandler { tx_batch_maker, tx_votes },
         );
 
         info!(
@@ -120,48 +122,29 @@ impl Primary {
 #[derive(Clone)]
 struct TxReceiverHandler {
     tx_batch_maker: Sender<Vec<Transaction>>,
+    tx_votes: Sender<Vote>,
 }
 
 #[async_trait]
 impl MessageHandler for TxReceiverHandler {
     async fn dispatch(&self, _writer: &mut Writer, message: Bytes) -> Result<(), Box<dyn Error>> {
         // Send the transaction to the batch maker.
-        match bincode::deserialize::<Vec<Transaction>>(&message) {
-            Ok(tx) => {
+        match bincode::deserialize(&message).map_err(DagError::SerializationError)? {
+            PrimaryMessage::Transactions(txs) => {
                 //info!("Received {:?}", tx.digest().0);
                 self.tx_batch_maker
-                    .send(tx)
+                    .send(txs)
                     .await
                     .expect("Failed to send transaction")
             },
-            Err(e) => warn!("Serialization error: {}", e),
-        }
-
-        // Give the change to schedule other tasks.
-        tokio::task::yield_now().await;
-        Ok(())
-    }
-}
-
-/// Defines how the network receiver handles incoming votes.
-#[derive(Clone)]
-struct VoteReceiverHandler {
-    tx_votes: Sender<Vote>,
-}
-
-#[async_trait]
-impl MessageHandler for VoteReceiverHandler {
-    async fn dispatch(&self, _writer: &mut Writer, message: Bytes) -> Result<(), Box<dyn Error>> {
-        // Send the transaction to the batch maker.
-        match bincode::deserialize::<Vote>(&message) {
-            Ok(vote) => {
-                //info!("Received {:?}", tx.digest().0);
+            PrimaryMessage::Vote(vote) => {
+                info!("Received vote {:?}", vote);
                 self.tx_votes
                     .send(vote)
                     .await
-                    .expect("Failed to send transaction")
+                    .expect("Failed to send vote")
             },
-            Err(e) => warn!("Serialization error: {}", e),
+            //Err(e) => warn!("Serialization error: {}", e),
         }
 
         // Give the change to schedule other tasks.

@@ -97,7 +97,6 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
                 committee.clone(),
                 parameters.clone(),
                 store,
-                tx_output,
                 byzantine_node,
             );
         }

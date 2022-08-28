@@ -11,7 +11,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::{Instant, sleep};
 use network::SimpleSender;
 use crate::elections::Election;
-use crate::messages::Batch;
+use crate::messages::{Batch, PrimaryMessage};
 use config::Authority;
 use crate::messages::Vote;
 use crypto::Digest;
@@ -51,7 +51,7 @@ pub struct Core {
     /// Network delay
     network_delay: u64,
     counter: u64,
-    tx_votes: Sender<Vote>,
+    rx_votes: Receiver<Vote>,
     byzantine_node: bool,
 }
 
@@ -65,7 +65,7 @@ impl Core {
         max_batch_delay: u64,
         rx_transaction: Receiver<Vec<Transaction>>,
         primary_addresses: Vec<(PublicKey, SocketAddr)>,
-        tx_votes: Sender<Vote>,
+        rx_votes: Receiver<Vote>,
         byzantine_node: bool,
     ) {
         tokio::spawn(async move {
@@ -84,7 +84,7 @@ impl Core {
                 confirmed_txs: BTreeSet::new(),
                 network_delay: 200,
                 counter: 0,
-                tx_votes,
+                rx_votes,
                 byzantine_node,
             }
             .run()
@@ -99,15 +99,20 @@ impl Core {
 
         loop {
             tokio::select! {
+                Some(vote) = self.rx_votes.recv() => {
+                    info!("Received a vote: {:#?}", vote);
+                },
+
                 // Assemble client transactions into batches of preset size.
                 Some(transactions) = self.rx_transaction.recv() => {
                     for transaction in transactions {
-                        info!("Received {:?}", transaction.digest().0);
+                        info!("Received tx {:?}", transaction.digest().0);
 
                         /// Initial random vote
                         let vote = rand::thread_rng().gen_range(0..2);
-                        let vote = Vote::new(transaction.digest(), vote, &self.name, &mut self.signature_service, 0, vec![]).await;
-                        let serialized = bincode::serialize(&vote).expect("Failed to serialize our own batch");
+                        let vote = PrimaryMessage::Vote(Vote::new(transaction.digest(), vote, &self.name, &mut self.signature_service, 0, vec![]).await);
+                        let serialized = bincode::serialize(&vote).expect("Failed to serialize our own vote");
+                        info!("Serialized vote: {:#?}", serialized);
                         /// Send the vote to 2f random nodes
                         let (names, mut addresses): (Vec<PublicKey>, Vec<SocketAddr>) = self.primary_addresses.iter().cloned().unzip();
                         let len = addresses.len();
@@ -116,6 +121,7 @@ impl Core {
                             addresses.remove(random);
                         }
                         let bytes = Bytes::from(serialized.clone());
+                        info!("Vote bytes: {:#?}", bytes);
                         if !addresses.is_empty() {
                             info!("Vote {:?} sent to {:?}", vote, addresses);
                             let handlers = self.network.broadcast(addresses, bytes).await;

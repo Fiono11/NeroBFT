@@ -13,7 +13,7 @@ use tokio::net::TcpStream;
 use tokio::time::{interval, sleep, Duration, Instant};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use crypto::Digest;
-use primary::{Payload, Transaction, now, ParentHash};
+use primary::{Payload, Transaction, now, ParentHash, PrimaryMessage};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -140,7 +140,7 @@ impl Client {
                 tx.timestamp = now();
                 tx.parent = ParentHash(Digest::default());
                 txs.push(tx.clone());
-                let transaction = bincode::serialize(&txs).unwrap();
+                let transaction = bincode::serialize(&PrimaryMessage::Transactions(txs.clone())).unwrap();
 
                 if let Err(e) = transport.send(Bytes::from(transaction)).await {
                     warn!("Failed to send transaction: {}", e);

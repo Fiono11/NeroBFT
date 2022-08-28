@@ -90,7 +90,7 @@ impl Transaction {
 
 #[derive(Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Vote {
-    pub id: BlockHash,
+    pub tx: BlockHash,
     pub vote: usize,
     pub author: PublicKey,
     pub signature: Signature,
@@ -108,7 +108,7 @@ impl Vote {
         view: Vec<Vote>,
     ) -> Self {
         let vote = Self {
-            id,
+            tx: id,
             vote,
             author: *author,
             signature: Signature::default(),
@@ -136,7 +136,7 @@ impl Vote {
 impl Hash for Vote {
     fn digest(&self) -> Digest {
         let mut hasher = Sha512::new();
-        hasher.update(&self.id);
+        hasher.update(&self.tx);
         Digest(hasher.finalize().as_slice()[..32].try_into().unwrap())
     }
 }
@@ -145,10 +145,20 @@ impl fmt::Debug for Vote {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(
             f,
-            "{}: ({}, {})",
+            "{}: (author: {}, tx: {}, vote: {}, round: {}, view: {:#?})",
             self.digest(),
             self.author,
-            self.id.0
+            self.tx.0,
+            //self.signature,
+            self.vote,
+            self.round,
+            self.view,
         )
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum PrimaryMessage {
+    Vote(Vote),
+    Transactions(Vec<Transaction>)
 }
