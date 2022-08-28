@@ -16,6 +16,7 @@ use config::Authority;
 use crate::messages::Vote;
 use crypto::Digest;
 use std::convert::TryFrom;
+use rand::{Rng, thread_rng};
 
 //#[cfg(test)]
 //#[path = "tests/batch_maker_tests.rs"]
@@ -50,7 +51,8 @@ pub struct Core {
     /// Network delay
     network_delay: u64,
     counter: u64,
-    tx_digest: Sender<BlockHash>,
+    tx_votes: Sender<Vote>,
+    byzantine_node: bool,
 }
 
 impl Core {
@@ -63,7 +65,8 @@ impl Core {
         max_batch_delay: u64,
         rx_transaction: Receiver<Vec<Transaction>>,
         primary_addresses: Vec<(PublicKey, SocketAddr)>,
-        tx_digest: Sender<BlockHash>,
+        tx_votes: Sender<Vote>,
+        byzantine_node: bool,
     ) {
         tokio::spawn(async move {
             Self {
@@ -81,7 +84,8 @@ impl Core {
                 confirmed_txs: BTreeSet::new(),
                 network_delay: 200,
                 counter: 0,
-                tx_digest,
+                tx_votes,
+                byzantine_node,
             }
             .run()
             .await;
@@ -99,8 +103,26 @@ impl Core {
                 Some(transactions) = self.rx_transaction.recv() => {
                     for transaction in transactions {
                         info!("Received {:?}", transaction.digest().0);
+
+                        /// Initial random vote
+                        let vote = rand::thread_rng().gen_range(0..2);
+                        let vote = Vote::new(transaction.digest(), vote, &self.name, &mut self.signature_service, 0, vec![]).await;
+                        let serialized = bincode::serialize(&vote).expect("Failed to serialize our own batch");
+                        /// Send the vote to 2f random nodes
+                        let (names, mut addresses): (Vec<PublicKey>, Vec<SocketAddr>) = self.primary_addresses.iter().cloned().unzip();
+                        let len = addresses.len();
+                        for i in 0..len - 2 * 1 {
+                            let random = thread_rng().gen_range(0..addresses.len());
+                            addresses.remove(random);
+                        }
+                        let bytes = Bytes::from(serialized.clone());
+                        if !addresses.is_empty() {
+                            info!("Vote {:?} sent to {:?}", vote, addresses);
+                            let handlers = self.network.broadcast(addresses, bytes).await;
+                        }
+
                         // verify timestamp
-                        if now() > transaction.timestamp() + self.network_delay ||
+                        /*if now() > transaction.timestamp() + self.network_delay ||
                             now() < transaction.timestamp() - self.network_delay {
                             warn!("Tx {:?} has invalid timestamp: now -> {:?} vs t -> {:?}", transaction.digest().0, now(), transaction.timestamp());
                             break;
@@ -173,17 +195,17 @@ impl Core {
                         if self.current_batch_size >= self.batch_size {
                             self.seal().await;
                             timer.as_mut().reset(Instant::now() + Duration::from_millis(self.max_batch_delay));
-                        }
+                        }*/
                     }
                 },
 
                 // If the timer triggers, seal the batch even if it contains few transactions.
-                () = &mut timer => {
+                /*() = &mut timer => {
                     if !self.current_batch.is_empty() {
                         self.seal().await;
                     }
                     timer.as_mut().reset(Instant::now() + Duration::from_millis(self.max_batch_delay));
-                }
+                }*/
             };
 
             // Give the change to schedule other tasks.

@@ -91,20 +91,29 @@ impl Transaction {
 #[derive(Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Vote {
     pub id: BlockHash,
+    pub vote: usize,
     pub author: PublicKey,
     pub signature: Signature,
+    pub round: usize,
+    pub view: Vec<Vote>,
 }
 
 impl Vote {
     pub async fn new(
         id: BlockHash,
+        vote: usize,
         author: &PublicKey,
         signature_service: &mut SignatureService,
+        round: usize,
+        view: Vec<Vote>,
     ) -> Self {
         let vote = Self {
             id,
+            vote,
             author: *author,
             signature: Signature::default(),
+            round,
+            view,
         };
         let signature = signature_service.request_signature(vote.digest()).await;
         Self { signature, ..vote }

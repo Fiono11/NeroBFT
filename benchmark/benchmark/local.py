@@ -85,14 +85,29 @@ class LocalBench:
                 sleep(0.5)  # Removing the store may take time.
 
             # Run the primaries (except the faulty ones).
-            for i, address in enumerate(committee.primary_addresses(self.faults)):
-                cmd = CommandMaker.run_primary(
-                    PathMaker.key_file(i),
-                    PathMaker.committee_file(),
-                    PathMaker.db_path(i),
-                    PathMaker.parameters_file(),
-                    debug=debug
-                )
+            addresses = committee.primary_addresses(self.faults)
+            number_of_nodes = len(addresses)
+            number_of_byzantine_nodes = (number_of_nodes - 1) / 3;
+            number_of_honest_nodes = number_of_nodes - number_of_byzantine_nodes
+            for i, address in enumerate(addresses):
+                if i < number_of_honest_nodes:
+                    cmd = CommandMaker.run_primary(
+                        PathMaker.key_file(i),
+                        PathMaker.committee_file(),
+                        PathMaker.db_path(i),
+                        PathMaker.parameters_file(),
+                        'false',
+                        debug=debug
+                    )
+                else:
+                    cmd = CommandMaker.run_primary(
+                        PathMaker.key_file(i),
+                        PathMaker.committee_file(),
+                        PathMaker.db_path(i),
+                        PathMaker.parameters_file(),
+                        'true',
+                        debug=debug
+                    )
                 log_file = PathMaker.primary_log_file(i)
                 self._background_run(cmd, log_file)
 

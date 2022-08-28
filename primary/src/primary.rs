@@ -10,7 +10,7 @@ use store::Store;
 use tokio::sync::mpsc::{channel, Sender};
 use crate::BlockHash;
 use crate::core::Core;
-use crate::messages::Transaction;
+use crate::messages::{Transaction, Vote};
 
 /// The default channel capacity for each channel of the worker.
 pub const CHANNEL_CAPACITY: usize = 1_000;
@@ -24,6 +24,8 @@ pub struct Primary {
     parameters: Parameters,
     /// The persistent storage.
     store: Store,
+    /// If the node is byzantine or not
+    byzantine_node: bool,
 }
 
 impl Primary {
@@ -32,7 +34,8 @@ impl Primary {
         committee: Committee,
         parameters: Parameters,
         store: Store,
-        tx_digest: Sender<BlockHash>,
+        tx_votes: Sender<Vote>,
+        byzantine_node: bool,
     ) {
         // Write the parameters to the logs.
         parameters.log();
@@ -43,6 +46,7 @@ impl Primary {
             committee: committee.clone(),
             parameters,
             store,
+            byzantine_node,
         };
 
         let (tx_batch_maker, rx_batch_maker) = channel(CHANNEL_CAPACITY);
@@ -68,8 +72,16 @@ impl Primary {
                 .iter()
                 .map(|(name, addresses)| (*name, addresses.transactions))
                 .collect(),
-            tx_digest,
+            tx_votes,
+            byzantine_node,
         );
+
+        if byzantine_node {
+            info!("Primary {} is a byzantine node!", keypair.name.clone());
+        }
+        else {
+            info!("Primary {} is not a byzantine node!", keypair.name.clone());
+        }
 
         // NOTE: This log entry is used to compute performance.
         info!(
@@ -119,6 +131,33 @@ impl MessageHandler for TxReceiverHandler {
                 //info!("Received {:?}", tx.digest().0);
                 self.tx_batch_maker
                     .send(tx)
+                    .await
+                    .expect("Failed to send transaction")
+            },
+            Err(e) => warn!("Serialization error: {}", e),
+        }
+
+        // Give the change to schedule other tasks.
+        tokio::task::yield_now().await;
+        Ok(())
+    }
+}
+
+/// Defines how the network receiver handles incoming votes.
+#[derive(Clone)]
+struct VoteReceiverHandler {
+    tx_votes: Sender<Vote>,
+}
+
+#[async_trait]
+impl MessageHandler for VoteReceiverHandler {
+    async fn dispatch(&self, _writer: &mut Writer, message: Bytes) -> Result<(), Box<dyn Error>> {
+        // Send the transaction to the batch maker.
+        match bincode::deserialize::<Vote>(&message) {
+            Ok(vote) => {
+                //info!("Received {:?}", tx.digest().0);
+                self.tx_votes
+                    .send(vote)
                     .await
                     .expect("Failed to send transaction")
             },

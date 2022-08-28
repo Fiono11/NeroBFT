@@ -7,7 +7,7 @@ use env_logger::Env;
 use log::info;
 use store::Store;
 use tokio::sync::mpsc::{channel, Receiver};
-use primary::{Primary, BlockHash};
+use primary::{Primary, BlockHash, Vote};
 
 /// The default channel capacity.
 pub const CHANNEL_CAPACITY: usize = 1_000;
@@ -30,6 +30,7 @@ async fn main() -> Result<()> {
                 .args_from_usage("--committee=<FILE> 'The file containing committee information'")
                 .args_from_usage("--parameters=[FILE] 'The file containing the node parameters'")
                 .args_from_usage("--store=<PATH> 'The path where to create the data store'")
+                .args_from_usage("--byzantine=<BIN> 'If the deployed node is byzantine or not'")
                 .subcommand(SubCommand::with_name("primary").about("Run a single primary"))
                 .setting(AppSettings::SubcommandRequiredElseHelp),
         )
@@ -64,6 +65,9 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
     let committee_file = matches.value_of("committee").unwrap();
     let parameters_file = matches.value_of("parameters");
     let store_path = matches.value_of("store").unwrap();
+    let byzantine_node = matches.value_of("byzantine").unwrap();
+
+    let byzantine_node: bool = byzantine_node.parse().unwrap();
 
     // Read the committee and node's keypair from file.
     let keypair = KeyPair::import(key_file).context("Failed to load the node's keypair")?;
@@ -94,6 +98,7 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
                 parameters.clone(),
                 store,
                 tx_output,
+                byzantine_node,
             );
         }
         _ => unreachable!(),
@@ -108,7 +113,7 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
 }
 
 /// Receives an ordered list of certificates and apply any application-specific logic.
-async fn analyze(mut rx_output: Receiver<BlockHash>) {
+async fn analyze(mut rx_output: Receiver<Vote>) {
     while let Some(tx) = rx_output.recv().await {
         // NOTE: Here goes the application logic.
         info!("Confirmed tx: {:#?}", tx);

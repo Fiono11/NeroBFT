@@ -30,13 +30,15 @@ class CommandMaker:
         return f'./node generate_keys --filename {filename}'
 
     @staticmethod
-    def run_primary(keys, committee, store, parameters, debug=True):
+    def run_primary(keys, committee, store, parameters, byzantine, debug=True):
         assert isinstance(keys, str)
         assert isinstance(committee, str)
         assert isinstance(parameters, str)
+        assert isinstance(byzantine, str)
         assert isinstance(debug, bool)
         v = '-vvv' if debug else '-vv'
-        return f'./node {v} run --keys {keys} --committee {committee} --store {store} --parameters {parameters} primary'
+        return f'./node {v} run --keys {keys} --committee {committee} --store {store} --parameters {parameters} ' \
+               f'--byzantine {byzantine} primary'
 
     @staticmethod
     def run_client(address, size, rate):

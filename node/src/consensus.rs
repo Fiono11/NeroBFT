@@ -7,12 +7,14 @@ const NUMBER_OF_NODES: usize = 4;
 const NUMBER_OF_BYZANTINE_NODES: usize = (NUMBER_OF_NODES - 1) / 3;
 const NUMBER_OF_HONEST_NODES: usize = NUMBER_OF_NODES - NUMBER_OF_BYZANTINE_NODES;
 const QUORUM: usize = NUMBER_OF_BYZANTINE_NODES * 2 + 1;
-const TOTAL_TXS: usize = 10;
+const TOTAL_TXS: usize = 1000;
 
 fn main() {
     let mut total_confirmed = 0;
 
     for _ in 0..TOTAL_TXS {
+
+        println!("New consensus instance");
 
         let mut votes: HashMap<(usize, usize), Vec<i32>> = HashMap::new();
         let mut nodes: HashMap<usize, usize> = HashMap::new();
@@ -54,7 +56,15 @@ fn main() {
         }
 
         loop {
-            println!("votes: {:?}", votes);
+            for i in 0..NUMBER_OF_NODES {
+                let current_round = *nodes.get(&i).unwrap();
+                for j in 0..current_round + 1 {
+                    let votes = votes.get(&(i, j)).unwrap();
+                    println!("Votes of node {} in round {}: {:?}", i, j, votes);
+                }
+            }
+
+            // Advance round
 
             for i in 0..NUMBER_OF_HONEST_NODES {
                 let current_round = *nodes.get(&i).unwrap();
@@ -76,31 +86,50 @@ fn main() {
                     }
                 }
                 if zeros + ones >= QUORUM {
-                    let mut one = one_quorum.get(&i).unwrap().clone();
-                    let mut zero = zero_quorum.get(&i).unwrap().clone();
-                    if ones >= QUORUM {
-                        one.push(current_round);
-                        one_quorum.insert(i, one.clone());
-                        votes.insert((i, current_round + 1), vec![1; NUMBER_OF_NODES]);
-                        println!("Node {} voted {} in round {}", i, 1, current_round);
-                        if current_round != 0 {
-                            if one.contains(&(current_round - 1)) {
-                                decided.insert(i, 1);
-                                println!("Node {} decided {} in round {}", i, 1, current_round);
+                    if !decided.contains_key(&i) {
+                        let mut one = one_quorum.get(&i).unwrap().clone();
+                        let mut zero = zero_quorum.get(&i).unwrap().clone();
+                        if ones >= QUORUM {
+                            one.push(current_round);
+                            one_quorum.insert(i, one.clone());
+                            votes.insert((i, current_round + 1), vec![1; NUMBER_OF_NODES]);
+                            //println!("Node {} voted {} in round {}", i, 1, current_round + 1);
+                            if current_round != 0 {
+                                if one.contains(&(current_round - 1)) {
+                                    decided.insert(i, 1);
+                                    println!("Node {} decided {} in round {}", i, 1, current_round + 1);
+                                }
                             }
+                        } else if zeros >= QUORUM {
+                            zero.push(current_round);
+                            zero_quorum.insert(i, zero.clone());
+                            votes.insert((i, current_round + 1), vec![0; NUMBER_OF_NODES]);
+                            if current_round != 0 {
+                                if zero.contains(&(current_round - 1)) {
+                                    decided.insert(i, 0);
+                                    println!("Node {} decided {} in round {}", i, 0, current_round + 1);
+                                }
+                            }
+                        } else {
+                            //zero.push(current_round);
+                            //if zeros >= QUORUM {
+                                //zero_quorum.insert(i, zero.clone());
+                            //}
+                            votes.insert((i, current_round + 1), vec![0; NUMBER_OF_NODES]);
+                            println!("Node {} voted {} in round {}", i, 0, current_round + 1);
+                            //if current_round != 0 {
+                                //if zero.contains(&(current_round - 1)) {
+                                    //decided.insert(i, 0);
+                                    //println!("Node {} decided {} in round {}", i, 0, current_round + 1);
+                                //}
+                            //}
                         }
                     }
                     else {
-                        zero.push(current_round);
-                        zero_quorum.insert(i, zero.clone());
-                        votes.insert((i, current_round + 1), vec![0; NUMBER_OF_NODES]);
-                        println!("Node {} voted {} in round {}", i, 0, current_round);
-                        if current_round != 0 {
-                            if zero.contains(&(current_round - 1)) {
-                                decided.insert(i, 0);
-                                println!("Node {} decided {} in round {}", i, 0, current_round);
-                            }
-                        }
+                        /// Vote the decided value
+                        let decided_value = *decided.get(&i).unwrap();
+                        votes.insert((i, current_round + 1), vec![decided_value; NUMBER_OF_NODES]);
+                        println!("Node {} voted {} in round {}", i, decided_value, current_round + 1);
                     }
                     nodes.insert(i, current_round + 1);
                 }
