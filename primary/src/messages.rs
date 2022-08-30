@@ -96,7 +96,7 @@ pub struct Vote {
     pub origin: PublicKey,
     pub signature: Signature,
     pub round: usize,
-    pub view: Vec<Vote>,
+    pub view: BTreeSet<Vote>,
 }
 
 impl Vote {
@@ -107,7 +107,7 @@ impl Vote {
         origin: &PublicKey,
         signature_service: &mut SignatureService,
         round: usize,
-        view: Vec<Vote>,
+        view: BTreeSet<Vote>,
     ) -> Self {
         let vote = Self {
             tx: id,
@@ -148,7 +148,7 @@ impl fmt::Debug for Vote {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(
             f,
-            "{}: (author: {}, origin: {}, tx: {}, vote: {}, round: {}, view: {:#?})",
+            "{}: (author: {}, origin: {}, tx: {}, decision: {}, round: {}, view: {:#?})",
             self.digest(),
             self.author,
             self.origin,
