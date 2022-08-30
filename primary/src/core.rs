@@ -109,22 +109,12 @@ impl Core {
                         Some((v, b)) => {
                             let mut votes_of_the_round_of_the_vote_received = v.clone();
                             votes_of_the_round_of_the_vote_received.insert(vote.clone());
-                            if vote.author == self.name {
-                                self.votes.insert(vote.round, (votes_of_the_round_of_the_vote_received.clone(), true));
-                            }
-                            else {
-                                self.votes.insert(vote.round, (votes_of_the_round_of_the_vote_received.clone(), false));
-                            }
+                            self.votes.insert(vote.round, (votes_of_the_round_of_the_vote_received.clone(), false));
                         }
                         None => {
                             let mut votes = BTreeSet::new();
                             votes.insert(vote.clone());
-                            if vote.author == self.name {
-                                self.votes.insert(vote.round, (votes, true));
-                            }
-                            else {
-                                self.votes.insert(vote.round, (votes, false));
-                            }
+                            self.votes.insert(vote.round, (votes, false));
                         }
                     }
                     //info!("votes: {:?}", self.votes);
