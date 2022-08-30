@@ -138,7 +138,6 @@ impl MessageHandler for TxReceiverHandler {
                     .expect("Failed to send transaction")
             },
             PrimaryMessage::Vote(vote) => {
-                info!("Received vote {:?}", vote);
                 self.tx_votes
                     .send(vote)
                     .await

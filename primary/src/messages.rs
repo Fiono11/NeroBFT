@@ -91,8 +91,9 @@ impl Transaction {
 #[derive(Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Vote {
     pub tx: BlockHash,
-    pub vote: usize,
+    pub decision: usize,
     pub author: PublicKey,
+    pub origin: PublicKey,
     pub signature: Signature,
     pub round: usize,
     pub view: Vec<Vote>,
@@ -101,16 +102,18 @@ pub struct Vote {
 impl Vote {
     pub async fn new(
         id: BlockHash,
-        vote: usize,
+        decision: usize,
         author: &PublicKey,
+        origin: &PublicKey,
         signature_service: &mut SignatureService,
         round: usize,
         view: Vec<Vote>,
     ) -> Self {
         let vote = Self {
             tx: id,
-            vote,
+            decision: decision,
             author: *author,
+            origin: *origin,
             signature: Signature::default(),
             round,
             view,
@@ -145,12 +148,13 @@ impl fmt::Debug for Vote {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(
             f,
-            "{}: (author: {}, tx: {}, vote: {}, round: {}, view: {:#?})",
+            "{}: (author: {}, origin: {}, tx: {}, vote: {}, round: {}, view: {:#?})",
             self.digest(),
             self.author,
+            self.origin,
             self.tx.0,
             //self.signature,
-            self.vote,
+            self.decision,
             self.round,
             self.view,
         )

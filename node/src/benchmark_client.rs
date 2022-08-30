@@ -127,9 +127,9 @@ impl Client {
                     payload.put_u8(0u8); // Sample txs start with 0.
                     payload.put_u64(counter); // This counter identifies the tx.
                 } else {*/
-                    r += 1;
+                    //r += 1;
                     payload.put_u8(1u8); // Standard txs start with 1.
-                    payload.put_u64(r); // Ensures all clients send different txs.
+                    //payload.put_u64(r); // Ensures all clients send different txs.
                 //};
 
                 payload.resize(self.size, 0u8);
