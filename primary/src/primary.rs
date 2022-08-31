@@ -1,8 +1,9 @@
+use std::collections::BTreeSet;
 // Copyright(C) Facebook, Inc. and its affiliates.
 use async_trait::async_trait;
 use bytes::Bytes;
 use config::{Committee, Parameters, KeyPair};
-use crypto::SignatureService;
+use crypto::{PublicKey, SignatureService};
 use log::{info, warn};
 use network::{MessageHandler, Writer, Receiver as SimpleReceiver};
 use std::error::Error;
@@ -52,9 +53,10 @@ impl Primary {
 
         let (tx_transactions, rx_batch_maker) = channel(CHANNEL_CAPACITY);
         let (tx_votes, rx_votes) = channel(CHANNEL_CAPACITY);
+        let (tx_decisions, rx_decisions) = channel(CHANNEL_CAPACITY);
 
         // Spawn all primary tasks.
-        primary.messages(tx_transactions, tx_votes);
+        primary.handle_messages(tx_transactions, tx_votes, tx_decisions);
 
         // The `SignatureService` is used to require signatures on specific digests.
         let signature_service = SignatureService::new(keypair.secret.clone());
@@ -76,6 +78,7 @@ impl Primary {
                 .collect(),
             rx_votes,
             byzantine_node,
+            rx_decisions,
         );
 
         if byzantine_node {
@@ -98,7 +101,7 @@ impl Primary {
     }
 
     /// Spawn all tasks responsible to handle clients transactions.
-    fn messages(&self, tx_batch_maker: Sender<Vec<Transaction>>, tx_votes: Sender<Vote>) {
+    fn handle_messages(&self, tx_batch_maker: Sender<Vec<Transaction>>, tx_votes: Sender<Vote>, tx_decisions: Sender<(BlockHash, PublicKey, usize)>) {
         // We first receive clients' transactions from the network.
         let mut address = self
             .committee
@@ -108,7 +111,7 @@ impl Primary {
         address.set_ip("127.0.0.1".parse().unwrap());
         SimpleReceiver::spawn(
             address,
-            /* handler */ TxReceiverHandler { tx_batch_maker, tx_votes },
+            /* handler */ TxReceiverHandler { tx_batch_maker, tx_votes, tx_decisions },
         );
 
         info!(
@@ -123,6 +126,8 @@ impl Primary {
 struct TxReceiverHandler {
     tx_batch_maker: Sender<Vec<Transaction>>,
     tx_votes: Sender<Vote>,
+    tx_decisions: Sender<(BlockHash, PublicKey, usize)>
+    // only one channel for primary messages
 }
 
 #[async_trait]
@@ -143,6 +148,12 @@ impl MessageHandler for TxReceiverHandler {
                     .await
                     .expect("Failed to send vote")
             },
+            PrimaryMessage::Decision(decision) => {
+                self.tx_decisions
+                    .send(decision)
+                    .await
+                    .expect("Failed to send decision")
+            }
             //Err(e) => warn!("Serialization error: {}", e),
         }
 

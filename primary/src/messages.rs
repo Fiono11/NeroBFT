@@ -164,5 +164,6 @@ impl fmt::Debug for Vote {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum PrimaryMessage {
     Vote(Vote),
-    Transactions(Vec<Transaction>)
+    Transactions(Vec<Transaction>),
+    Decision((BlockHash, PublicKey, usize))
 }
