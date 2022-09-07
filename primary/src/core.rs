@@ -149,7 +149,9 @@ impl Core {
                         }*/
                         let bytes = Bytes::from(serialized.clone());
                         if !addresses.is_empty() {
-                            info!("Vote {:?} sent to {:?}", first_own_vote, addresses);
+                            let delay = rand::thread_rng().gen_range(0..1000);
+                            sleep(Duration::from_millis(delay)).await;
+                            info!("Vote {:?} sent to {:?} with a delay of {}", first_own_vote, addresses, delay);
                             let handlers = self.network.broadcast(addresses, bytes).await;
                         }
                     }
@@ -190,7 +192,9 @@ impl Core {
                                         let (names, mut addresses): (Vec<PublicKey>, Vec<SocketAddr>) = self.primary_addresses.iter().cloned().unzip();
                                         let bytes = Bytes::from(serialized.clone());
                                         if !addresses.is_empty() {
-                                            info!("Decision {:?} sent to {:?}", 1, addresses);
+                                            let delay = rand::thread_rng().gen_range(0..1000);
+                                            sleep(Duration::from_millis(delay)).await;
+                                            info!("Decision {:?} sent to {:?} with a delay of {}", 1, addresses, delay);
                                             let handlers = self.network.broadcast(addresses, bytes).await;
                                         }
                                     }
@@ -201,7 +205,9 @@ impl Core {
                                         let (names, mut addresses): (Vec<PublicKey>, Vec<SocketAddr>) = self.primary_addresses.iter().cloned().unzip();
                                         let bytes = Bytes::from(serialized.clone());
                                         if !addresses.is_empty() {
-                                            info!("Decision {:?} sent to {:?}", 0, addresses);
+                                            let delay = rand::thread_rng().gen_range(0..1000);
+                                            sleep(Duration::from_millis(delay)).await;
+                                            info!("Decision {:?} sent to {:?} with a delay of {}", 0, addresses, delay);
                                             let handlers = self.network.broadcast(addresses, bytes).await;
                                         }
                                     }
@@ -318,7 +324,9 @@ impl Core {
                                                     let (names, mut addresses): (Vec<PublicKey>, Vec<SocketAddr>) = self.primary_addresses.iter().cloned().unzip();
                                                     let bytes = Bytes::from(serialized.clone());
                                                     if !addresses.is_empty() {
-                                                        info!("Decision {:?} sent to {:?}", decision, addresses);
+                                                        let delay = rand::thread_rng().gen_range(0..1000);
+                                                        sleep(Duration::from_millis(delay)).await;
+                                                        info!("Decision {:?} sent to {:?} with a delay of {}", decision, addresses, delay);
                                                         let handlers = self.network.broadcast(addresses, bytes).await;
                                                     }
                                                 }
@@ -329,7 +337,9 @@ impl Core {
                                                     let (names, mut addresses): (Vec<PublicKey>, Vec<SocketAddr>) = self.primary_addresses.iter().cloned().unzip();
                                                     let bytes = Bytes::from(serialized.clone());
                                                     if !addresses.is_empty() {
-                                                        info!("Decision {:?} sent to {:?}", decision, addresses);
+                                                        let delay = rand::thread_rng().gen_range(0..1000);
+                                                        sleep(Duration::from_millis(delay)).await;
+                                                        info!("Decision {:?} sent to {:?} with a delay of {}", decision, addresses, delay);
                                                         let handlers = self.network.broadcast(addresses, bytes).await;
                                                     }
                                                 }
@@ -370,7 +380,9 @@ impl Core {
                                     }*/
                                     let bytes = Bytes::from(serialized.clone());
                                     if !addresses.is_empty() {
-                                        info!("Vote {:?} sent to {:?}", own_vote, addresses);
+                                        let delay = rand::thread_rng().gen_range(0..1000);
+                                        sleep(Duration::from_millis(delay)).await;
+                                        info!("Vote {:?} sent to {:?} with a delay of {}", own_vote, addresses, delay);
                                         let handlers = self.network.broadcast(addresses, bytes).await;
                                     }
                                 //self.current_round += 1;
@@ -432,7 +444,9 @@ impl Core {
                         }*/
                         let bytes = Bytes::from(serialized.clone());
                         if !addresses.is_empty() {
-                            info!("Vote {:?} sent to {:?}", first_own_vote, addresses);
+                            let delay = rand::thread_rng().gen_range(0..1000);
+                            sleep(Duration::from_millis(delay)).await;
+                            info!("Vote {:?} sent to {:?} with a delay of {}", first_own_vote, addresses, delay);
                             let handlers = self.network.broadcast(addresses, bytes).await;
                         }
 
