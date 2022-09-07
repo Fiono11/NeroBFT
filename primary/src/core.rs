@@ -11,12 +11,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::{Instant, sleep};
 use network::SimpleSender;
 use crate::elections::Election;
-use crate::messages::{Batch, PrimaryMessage};
+use crate::messages::{Batch, PrimaryMessage, VoteType};
 use config::Authority;
 use crate::messages::Vote;
 use crypto::Digest;
 use std::convert::TryFrom;
 use rand::{Rng, thread_rng};
+use crate::messages::VoteType::{Strong, Weak};
 
 //#[cfg(test)]
 //#[path = "tests/batch_maker_tests.rs"]
@@ -53,9 +54,28 @@ pub struct Core {
     counter: u64,
     rx_votes: Receiver<Vote>,
     byzantine_node: bool,
-    votes: HashMap<usize, (BTreeSet<Vote>, bool, usize, usize)>,
+    votes: HashMap<Round, Tally>,
     current_round: usize,
     rx_decisions: Receiver<(BlockHash, PublicKey, usize)>,
+}
+
+pub type Round = usize;
+
+pub struct Tally {
+    votes: BTreeSet<Vote>,
+    voted: bool,
+    weak_zeros: usize,
+    weak_ones: usize,
+    strong_zeros: usize,
+    strong_ones: usize,
+}
+
+impl Tally {
+    pub fn new(votes: BTreeSet<Vote>, voted: bool, weak_zeros: usize, weak_ones: usize, strong_zeros: usize, strong_ones: usize) -> Self {
+        Self {
+            votes, voted, weak_zeros, weak_ones, strong_zeros, strong_ones,
+        }
+    }
 }
 
 impl Core {
@@ -113,23 +133,31 @@ impl Core {
                 Some(vote) = self.rx_votes.recv() => {
                     info!("Received a vote: {:#?}", vote);
                     match self.votes.get(&vote.round) {
-                        Some((v, b, z, o)) => {
-                            let mut zeros = *z;
-                            let mut ones = *o;
-                            if !v.contains(&vote) {
-                                if vote.decision == 0 {
-                                    zeros += 1;
+                        Some(tally) => {
+                            let mut weak_zeros = tally.weak_zeros;
+                            let mut weak_ones = tally.weak_ones;
+                            let mut strong_zeros = tally.strong_zeros;
+                            let mut strong_ones = tally.strong_ones;
+                            if !tally.votes.contains(&vote) {
+                                if vote.decision == 0 && vote.vote_type == VoteType::Weak {
+                                    weak_zeros += 1;
                                 }
-                                if vote.decision == 1 {
-                                    ones += 1;
+                                if vote.decision == 1 && vote.vote_type == VoteType::Weak {
+                                    weak_ones += 1;
+                                }
+                                if vote.decision == 0 && vote.vote_type == VoteType::Strong {
+                                    strong_zeros += 1;
+                                }
+                                if vote.decision == 1 && vote.vote_type == VoteType::Strong {
+                                    strong_ones += 1;
                                 }
                             }
-                            let mut votes_of_the_round_of_the_vote_received = v.clone();
+                            let mut votes_of_the_round_of_the_vote_received = tally.votes.clone();
                             votes_of_the_round_of_the_vote_received.insert(vote.clone());
-                            self.votes.insert(vote.round, (votes_of_the_round_of_the_vote_received.clone(), *b, zeros, ones));
-                            info!("Tx {:?} has {} zeros and {} ones in round {}", vote.tx, zeros, ones, vote.round);
+                            self.votes.insert(vote.round, Tally::new(votes_of_the_round_of_the_vote_received.clone(), tally.voted, weak_zeros, weak_ones, strong_zeros, strong_ones));
+                            info!("Tx {:?} has {} weak zeros, {} weak ones, {} strong zeros and {} strong ones in round {}", vote.tx, weak_zeros, weak_ones, strong_zeros, strong_ones, vote.round);
                             if !self.decided_txs.contains(&(vote.tx.clone(), self.name, 0)) && !self.decided_txs.contains(&(vote.tx.clone(), self.name, 1)) {
-                                if ones >= 3 {
+                                if strong_ones >= 3 {
                                     self.decided_txs.insert((vote.tx.clone(), self.name, 1));
                                     info!("Confirmed {:?} in round {}!", vote.tx.clone(), vote.round);
                                     let serialized = bincode::serialize(&PrimaryMessage::Decision((vote.tx.clone(), self.name, 1))).expect("Failed to serialize our own vote");
@@ -140,7 +168,7 @@ impl Core {
                                         let handlers = self.network.broadcast(addresses, bytes).await;
                                     }
                                 }
-                                if zeros >= 3 {
+                                if strong_zeros >= 3 {
                                     self.decided_txs.insert((vote.tx.clone(), self.name, 0));
                                     info!("Rejected {:?} in round {}!", vote.tx.clone(), vote.round);
                                     let serialized = bincode::serialize(&PrimaryMessage::Decision((vote.tx.clone(), self.name, 0))).expect("Failed to serialize our own vote");
@@ -154,27 +182,38 @@ impl Core {
                             }
                         }
                         None => {
-                            let mut zeros = 0;
-                            let mut ones = 0;
-                            if vote.decision == 0 {
-                                zeros += 1;
+                            let mut weak_zeros = 0;
+                            let mut weak_ones = 0;
+                            let mut strong_zeros = 0;
+                            let mut strong_ones = 0;
+                            if vote.decision == 0 && vote.vote_type == VoteType::Weak {
+                                weak_zeros += 1;
                             }
-                            if vote.decision == 1 {
-                                ones += 1;
+                            if vote.decision == 1 && vote.vote_type == VoteType::Weak {
+                                weak_ones += 1;
+                            }
+                            if vote.decision == 0 && vote.vote_type == VoteType::Strong {
+                                strong_zeros += 1;
+                            }
+                            if vote.decision == 1 && vote.vote_type == VoteType::Strong {
+                                strong_ones += 1;
                             }
                             let mut votes = BTreeSet::new();
                             votes.insert(vote.clone());
-                            self.votes.insert(vote.round, (votes, false, zeros, ones));
+                            self.votes.insert(vote.round, Tally::new(votes, false, weak_zeros, weak_ones, strong_zeros, strong_ones));
                         }
                     }
                     //info!("votes: {:?}", self.votes);
                     let mut decision = 0;
-                    let (votes_of_the_round_of_the_vote_received, voted_previous, mut zeros, mut ones) = self.votes.get(&vote.round).unwrap();
+                    let mut vote_type = VoteType::Weak;
+                    let tally = self.votes.get(&vote.round).unwrap();
+                    let (votes_of_the_round_of_the_vote_received, voted_previous, mut weak_zeros, mut weak_ones, mut strong_zeros, mut strong_ones) =
+                        (tally.votes.clone(), tally.voted, tally.weak_zeros, tally.weak_ones, tally.strong_zeros, tally.strong_ones);
                     let mut voted = false;
                     match self.votes.get(&(vote.round + 1)) {
-                        Some((v, b, z, o)) => {
-                            if *b == true {
-                                voted = *b;
+                        Some(tally) => {
+                            if tally.voted == true {
+                                voted = tally.voted;
                             }
                         }
                         None => ()
@@ -186,18 +225,26 @@ impl Core {
                     if votes_of_the_round_of_the_vote_received.len() >= 3 {
                         let tx = vote.tx.clone();
                         if !self.decided_txs.contains(&(tx.clone(), self.name, 0)) && !self.decided_txs.contains(&(tx.clone(), self.name, 1)) {
-                            if zeros > ones {
+                            if weak_zeros > weak_ones {
                                 decision = 0;
+                                if weak_zeros > 2 {
+                                    vote_type = Strong;
+                                }
                             }
                             else {
                                 decision = 1;
+                                if weak_ones > 2 {
+                                    vote_type = Strong;
+                                }
                             }
                         }
                         if self.decided_txs.contains(&(tx.clone(), self.name, 1)) {
                             decision = 1;
+                            vote_type = Strong;
                         }
                         if self.decided_txs.contains(&(tx.clone(), self.name, 0)) {
                             decision = 0;
+                            vote_type = Strong;
                         }
 
                         if self.decided_txs.len() <= 3 {
@@ -206,29 +253,39 @@ impl Core {
 
                                 for vote in votes_of_the_round_of_the_vote_received {
                                     let mut new_vote = vote.clone();
-                                    new_vote.view = BTreeSet::new();
-                                    new_votes_of_the_current_round.insert(new_vote);
+                                    new_vote.proof = BTreeSet::new();
+                                    if new_vote.round == round {
+                                        new_votes_of_the_current_round.insert(new_vote);
+                                    }
                                 }
 
                                 let mut own_vote: Vote = Vote::new(tx.clone(), decision, &self.name, &self.name,
-                                    &mut self.signature_service, round + 1, new_votes_of_the_current_round.clone()).await;
+                                    &mut self.signature_service, round + 1, new_votes_of_the_current_round.clone(), vote_type).await;
 
                                 match self.votes.get(&(round + 1)) {
-                                    Some((v, b, z, o)) => {
-                                        let mut zeros = *z;
-                                        let mut ones = *o;
-                                        if own_vote.decision == 0 {
-                                            zeros += 1;
+                                    Some(tally) => {
+                                        let mut weak_zeros = tally.weak_zeros;
+                                        let mut weak_ones = tally.weak_ones;
+                                        let mut strong_zeros = tally.strong_zeros;
+                                        let mut strong_ones = tally.strong_ones;
+                                        if own_vote.decision == 0 && own_vote.vote_type == VoteType::Weak {
+                                            weak_zeros += 1;
                                         }
-                                        if own_vote.decision == 1 {
-                                            ones += 1;
+                                        if own_vote.decision == 1 && own_vote.vote_type == VoteType::Weak {
+                                            weak_ones += 1;
                                         }
-                                        let mut votes = v.clone();
+                                        if own_vote.decision == 0 && own_vote.vote_type == VoteType::Strong {
+                                            strong_zeros += 1;
+                                        }
+                                        if own_vote.decision == 1 && own_vote.vote_type == VoteType::Strong {
+                                            strong_ones += 1;
+                                        }
+                                        let mut votes = tally.votes.clone();
                                         votes.insert(own_vote.clone());
-                                        self.votes.insert(round + 1, (votes, true, zeros, ones));
+                                        self.votes.insert(round + 1, Tally::new(votes, true, weak_zeros, weak_ones, strong_zeros, strong_ones));
                                         info!("Voted in round {}", round + 1);
                                         if !self.decided_txs.contains(&(vote.tx.clone(), self.name, 0)) && !self.decided_txs.contains(&(vote.tx.clone(), self.name, 1)) {
-                                            if ones >= 3 {
+                                            if strong_ones >= 3 {
                                                 self.decided_txs.insert((tx.clone(), self.name, 1));
                                                 info!("Confirmed {:?} in round {}!", tx.clone(), vote.round);
                                                 let serialized = bincode::serialize(&PrimaryMessage::Decision((tx.clone(), self.name, decision))).expect("Failed to serialize our own vote");
@@ -239,7 +296,7 @@ impl Core {
                                                     let handlers = self.network.broadcast(addresses, bytes).await;
                                                 }
                                             }
-                                            if zeros >= 3 {
+                                            if strong_zeros >= 3 {
                                                 self.decided_txs.insert((tx.clone(), self.name, 0));
                                                 info!("Rejected {:?} in round {}!", tx.clone(), vote.round);
                                                 let serialized = bincode::serialize(&PrimaryMessage::Decision((tx.clone(), self.name, decision))).expect("Failed to serialize our own vote");
@@ -253,17 +310,25 @@ impl Core {
                                         }
                                     }
                                     None => {
-                                        let mut zeros = 0;
-                                        let mut ones = 0;
-                                        if own_vote.decision == 0 {
-                                            zeros += 1;
+                                        let mut weak_zeros = 0;
+                                        let mut weak_ones = 0;
+                                        let mut strong_zeros = 0;
+                                        let mut strong_ones = 0;
+                                        if own_vote.decision == 0 && own_vote.vote_type == VoteType::Weak {
+                                            weak_zeros += 1;
                                         }
-                                        if own_vote.decision == 1 {
-                                            ones += 1;
+                                        if own_vote.decision == 1 && own_vote.vote_type == VoteType::Weak {
+                                            weak_ones += 1;
+                                        }
+                                        if own_vote.decision == 0 && own_vote.vote_type == VoteType::Strong {
+                                            strong_zeros += 1;
+                                        }
+                                        if own_vote.decision == 1 && own_vote.vote_type == VoteType::Strong {
+                                            strong_ones += 1;
                                         }
                                         let mut votes = BTreeSet::new();
                                         votes.insert(own_vote.clone());
-                                        self.votes.insert(round + 1, (votes, true, zeros, ones));
+                                        self.votes.insert(round + 1, Tally::new(votes, true, weak_zeros, weak_ones, strong_zeros, strong_ones));
                                         info!("Voted in round {}", round + 1);
                                     }
                                 }
@@ -295,28 +360,36 @@ impl Core {
 
                         /// Initial random vote
                         let decision = rand::thread_rng().gen_range(0..2);
-                        let first_own_vote = Vote::new(transaction.digest(), decision, &self.name, &self.name, &mut self.signature_service, 0, BTreeSet::new()).await;
+                        let first_own_vote = Vote::new(transaction.digest(), decision, &self.name, &self.name, &mut self.signature_service, 0, BTreeSet::new(), VoteType::Weak).await;
                         match self.votes.get(&0) {
-                            Some((v, b, z, o)) => {
-                                let mut zeros = *z;
-                                let mut ones = *o;
-                                let mut votes = v.clone();
+                            Some(tally) => {
+                                let mut weak_zeros = tally.weak_zeros;
+                                let mut weak_ones = tally.weak_ones;
+                                let mut strong_zeros = tally.strong_zeros;
+                                let mut strong_ones = tally.strong_ones;
+                                let mut votes = tally.votes.clone();
                                 votes.insert(first_own_vote.clone());
-                                if decision == 0 {
-                                    self.votes.insert(0, (votes.clone(), true, zeros + 1, ones));
+                                if decision == 0 && first_own_vote.vote_type == VoteType::Weak {
+                                    self.votes.insert(0, Tally::new(votes.clone(), true, weak_zeros + 1, weak_ones, strong_zeros, strong_ones));
                                 }
-                                if decision == 1 {
-                                    self.votes.insert(0, (votes.clone(), true, zeros, ones + 1));
+                                if decision == 1 && first_own_vote.vote_type == VoteType::Weak {
+                                    self.votes.insert(0, Tally::new(votes.clone(), true, weak_zeros, weak_ones + 1, strong_zeros, strong_ones));
+                                }
+                                if decision == 0 && first_own_vote.vote_type == VoteType::Strong {
+                                    self.votes.insert(0, Tally::new(votes.clone(), true, weak_zeros, weak_ones, strong_zeros + 1, strong_ones));
+                                }
+                                if decision == 1 && first_own_vote.vote_type == VoteType::Strong {
+                                    self.votes.insert(0, Tally::new(votes.clone(), true, weak_zeros, weak_ones, strong_zeros, strong_ones + 1));
                                 }
                             }
                             None => {
                                 let mut votes = BTreeSet::new();
                                 votes.insert(first_own_vote.clone());
                                 if decision == 0 {
-                                    self.votes.insert(0, (votes.clone(), true, 1, 0));
+                                    self.votes.insert(0, Tally::new(votes.clone(), true, 1, 0, 0, 0));
                                 }
                                 if decision == 1 {
-                                    self.votes.insert(0, (votes.clone(), true, 0, 1));
+                                    self.votes.insert(0, Tally::new(votes.clone(), true, 0, 1, 0, 0));
                                 }
                             }
                         }

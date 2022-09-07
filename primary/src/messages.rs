@@ -96,7 +96,14 @@ pub struct Vote {
     pub origin: PublicKey,
     pub signature: Signature,
     pub round: usize,
-    pub view: BTreeSet<Vote>,
+    pub proof: BTreeSet<Vote>,
+    pub vote_type: VoteType,
+}
+
+#[derive(Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq, Debug)]
+pub enum VoteType {
+    Weak,
+    Strong
 }
 
 impl Vote {
@@ -107,7 +114,8 @@ impl Vote {
         origin: &PublicKey,
         signature_service: &mut SignatureService,
         round: usize,
-        view: BTreeSet<Vote>,
+        proof: BTreeSet<Vote>,
+        vote_type: VoteType,
     ) -> Self {
         let vote = Self {
             tx: id,
@@ -116,7 +124,8 @@ impl Vote {
             origin: *origin,
             signature: Signature::default(),
             round,
-            view,
+            proof,
+            vote_type,
         };
         let signature = signature_service.request_signature(vote.digest()).await;
         Self { signature, ..vote }
@@ -148,7 +157,7 @@ impl fmt::Debug for Vote {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(
             f,
-            "{}: (author: {}, origin: {}, tx: {}, decision: {}, round: {}, view: {:#?})",
+            "{}: (author: {}, origin: {}, tx: {}, decision: {}, round: {}, type: {:?}, view: {:#?})",
             self.digest(),
             self.author,
             self.origin,
@@ -156,7 +165,8 @@ impl fmt::Debug for Vote {
             //self.signature,
             self.decision,
             self.round,
-            self.view,
+            self.vote_type,
+            self.proof,
         )
     }
 }
@@ -164,6 +174,7 @@ impl fmt::Debug for Vote {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum PrimaryMessage {
     Vote(Vote),
+    //StrongVote(Vote),
     Transactions(Vec<Transaction>),
     Decision((BlockHash, PublicKey, usize))
 }
