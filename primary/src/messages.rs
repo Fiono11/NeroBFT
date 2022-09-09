@@ -149,6 +149,13 @@ impl Hash for PrimaryVote {
     fn digest(&self) -> Digest {
         let mut hasher = Sha512::new();
         hasher.update(&self.tx);
+        //hasher.update(&self.proof);
+        //hasher.update(&self.round);
+        //hasher.update(&self.decision);
+        hasher.update(&self.author);
+        //hasher.update(&self.vote_type);
+        hasher.update(&self.origin);
+        //hasher.update(&self.signature);
         // add other components of the vote
         Digest(hasher.finalize().as_slice()[..32].try_into().unwrap())
     }
@@ -158,7 +165,7 @@ impl fmt::Debug for PrimaryVote {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(
             f,
-            "{}: (author: {}, origin: {}, tx: {}, decision: {}, round: {}, type: {:?}, view: {:#?})",
+            "{}: (author: {}, origin: {}, tx: {}, decision: {}, round: {}, type: {:?}, proof: {:#?})",
             self.digest(),
             self.author,
             self.origin,

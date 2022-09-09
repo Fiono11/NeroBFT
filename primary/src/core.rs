@@ -21,6 +21,7 @@ use crate::messages::VoteType::{Strong, Weak};
 use crypto::Hash;
 use crate::PrimaryMessage::{Decision, Vote};
 use async_recursion::async_recursion;
+use serde::__private::de::TagOrContentField::Tag;
 
 //#[cfg(test)]
 //#[path = "tests/batch_maker_tests.rs"]
@@ -78,6 +79,7 @@ impl VoteDecision {
 
 pub type Round = usize;
 
+#[derive(Debug, Clone)]
 pub struct Tally {
     votes: BTreeSet<PrimaryVote>,
     voted: bool,
@@ -171,7 +173,7 @@ impl Core {
                 else if vote.decision == 1 && vote.vote_type == VoteType::Strong {
                     new_tally.strong_ones += 1;
                 }
-                return new_tally;
+                //return new_tally;
             }
             None => {
                 let mut votes = BTreeSet::new();
@@ -181,19 +183,20 @@ impl Core {
                     voted = true;
                 }
                 if vote.decision == 0 && vote.vote_type == VoteType::Weak {
-                    return Tally::new(votes, voted, 1, 0, 0, 0);
+                    new_tally = Tally::new(votes, voted, 1, 0, 0, 0);
                 }
                 else if vote.decision == 1 && vote.vote_type == VoteType::Weak {
-                    return Tally::new(votes, voted, 0, 1, 0, 0);
+                    new_tally = Tally::new(votes, voted, 0, 1, 0, 0);
                 }
                 else if vote.decision == 0 && vote.vote_type == VoteType::Strong {
-                    return Tally::new(votes, voted, 0, 0, 1, 0);
+                    new_tally = Tally::new(votes, voted, 0, 0, 1, 0);
                 }
                 else if vote.decision == 1 && vote.vote_type == VoteType::Strong {
-                    return Tally::new(votes, voted, 0, 0, 0, 1);
+                    new_tally = Tally::new(votes, voted, 0, 0, 0, 1);
                 }
             }
         }
+        info!("New tally in round {}: {:?}", vote.round, new_tally.clone());
         new_tally
     }
 
@@ -201,20 +204,22 @@ impl Core {
         let mut decision = VoteDecision::new(0, BTreeSet::new(), VoteType::Weak, false);
         match self.votes.get(&round) {
             Some(tally) => {
-                decision.proof = self.votes.get(&(round - 1)).unwrap().votes.clone();
+                decision.proof = self.votes.get(&round).unwrap().votes.clone();
                 if tally.strong_ones >= 3 {
                     decision.decision = 1;
                     decision.decision_type = VoteType::Strong;
                     decision.decided = true;
+                    info!("Confirmed {:?} in round {}!", self.votes.get(&round).unwrap().votes.first().unwrap().tx.clone(), round);
                 }
                 else if tally.strong_zeros >= 3 {
                     decision.decision_type = VoteType::Strong;
                     decision.decided = true;
+                    info!("Rejected {:?} in round {}!", self.votes.get(&round).unwrap().votes.first().unwrap().tx.clone(), round);
                 }
-                else if tally.weak_zeros >= 3 {
+                else if tally.weak_zeros + tally.strong_zeros >= 3 {
                     decision.decision_type = VoteType::Strong;
                 }
-                else if tally.weak_ones >= 3 {
+                else if tally.weak_ones + tally.strong_ones >= 3 {
                     decision.decision = 1;
                     decision.decision_type = VoteType::Strong;
                 }
@@ -227,60 +232,83 @@ impl Core {
                 return VoteDecision::new(random_decision, BTreeSet::new(), VoteType::Weak, false);
             }
         }
+        info!("Decided in round {}: {:?}", round, decision.decided);
         decision
     }
 
     /// Validate vote proof
     #[async_recursion]
-    async fn validate_proof(&self, v: PrimaryVote) -> bool {
-        let mut validations = vec![];
-        if v.round == 0 {
-            match v.signature.verify(&v.digest(), &v.author) {
+    async fn validate_proof(&self, vote: PrimaryVote) -> bool {
+        if vote.round == 0 {
+            return match vote.signature.verify(&vote.digest(), &vote.author) {
                 Ok(()) => {
-                    info!("Signature of vote {} of proof is valid!", v.digest());
-                    validations.push(true);
+                    info!("Proof validation: signature of vote {} is valid!", vote.digest());
+                    true
                 },
                 Err(e) => {
-                    info!("Signature of vote {} of proof is not valid!", v.digest());
-                    return false;
+                    info!("Proof validation: signature of vote {} is not valid!", vote.digest());
+                    false
                 },
             }
         }
         else {
-            assert!(v.proof.len() >= 3);
-            match self.votes.get(&v.round) {
-                Some(t) => {
-                    if !t.votes.contains(&v) {
-                        validations.push(true);
+            let mut validations = vec![];
+            for v in &vote.proof {
+                if self.votes.get(&v.round).unwrap().votes.contains(&v) {
+                    info!("Proof of vote {} is valid!", v.digest());
+                    return true;
+                }
+                if v.round == 0 {
+                    match v.signature.verify(&v.digest(), &v.author) {
+                        Ok(()) => {
+                            info!("Proof validation of vote {}: signature of vote {} is valid!", vote.digest(), v.digest());
+                            validations.push(true);
+                        },
+                        Err(e) => {
+                            info!("Proof validation of vote {}: signature of vote {} is not valid!", vote.digest(), v.digest());
+                            return false;
+                        },
                     }
-                    else {
-                        for vote in &v.proof {
-                            if self.validate_proof(vote.clone()).await {
+                }
+                else {
+                    //info!("Vote: {:?}", v);
+                    assert!(v.proof.len() >= 3);
+                    match self.votes.get(&v.round) {
+                        Some(t) => {
+                            if !t.votes.contains(&v) {
                                 validations.push(true);
                             }
                             else {
-                                return false;
+                                for vote in &v.proof {
+                                    if self.validate_proof(vote.clone()).await {
+                                        validations.push(true);
+                                    }
+                                    else {
+                                        return false;
+                                    }
+                                }
+                            }
+                        }
+                        None => {
+                            for vote in &v.proof {
+                                if self.validate_proof(vote.clone()).await {
+                                    validations.push(true);
+                                }
+                                else {
+                                    return false;
+                                }
                             }
                         }
                     }
                 }
-                None => {
-                    for vote in &v.proof {
-                        if self.validate_proof(vote.clone()).await {
-                            validations.push(true);
-                        }
-                        else {
-                            return false;
-                        }
-                    }
-                }
             }
-        }
-        if validations.len() == v.proof.len() {
-            return true;
-        }
-        else {
-            return false;
+            return if validations.len() == vote.proof.len() {
+                info!("Proof of vote {} is valid!", vote.digest());
+                true
+            } else {
+                info!("Proof of vote {} is not valid!", vote.digest());
+                false
+            }
         }
     }
 
@@ -298,6 +326,34 @@ impl Core {
                     self.decided_txs.insert(decision.0, hp);
                 }
 
+                Some(transactions) = self.rx_transaction.recv() => {
+                    for transaction in transactions {
+                        info!("Received tx {:?}", transaction.digest().0);
+
+                        /// Initial random vote
+                        let decision = rand::thread_rng().gen_range(0..2);
+                        let first_own_vote = PrimaryVote::new(transaction.digest(), decision, &self.name, &self.name, &mut self.signature_service, 0, BTreeSet::new(), VoteType::Weak).await;
+                        let mut new_tally = Tally::new(BTreeSet::new(), false, 0, 0, 0, 0);
+
+                        match self.votes.get(&0) {
+                            Some(tally) => {
+                                new_tally = tally.clone();
+                                let decision = self.make_decision(first_own_vote.round).await;
+                                if decision.decided {
+                                    let mut hp = HashMap::new();
+                                    hp.insert(self.name, decision.decision);
+                                    self.decided_txs.insert(first_own_vote.tx.clone(), hp);
+                                    self.broadcast_message(PrimaryMessage::Decision((first_own_vote.tx.clone(), self.name, decision.decision))).await;
+                                }
+                            }
+                            None => (),
+                        }
+                        new_tally = self.tally_vote(first_own_vote.clone()).await;
+                        self.votes.insert(first_own_vote.round, new_tally);
+                        self.broadcast_message(PrimaryMessage::Vote(first_own_vote.clone())).await
+                    }
+                }
+
                 Some(vote) = self.rx_votes.recv() => {
                     info!("Received a vote: {:#?}", vote);
                     // send different votes to different nodes
@@ -312,8 +368,10 @@ impl Core {
                     if !self.byzantine_node && self.decided_txs.len() <= 2 {
                         let mut is_signature_valid = false;
                         let mut is_proof_valid = false;
-                        let mut vote = PrimaryVote::new(vote.tx.clone(), 0, &self.name, &self.name, &mut self.signature_service, vote.round, BTreeSet::new(), VoteType::Weak).await;
+                        let mut own_vote = PrimaryVote::new(vote.tx.clone(), 0, &self.name, &self.name, &mut self.signature_service, vote.round + 1, BTreeSet::new(), VoteType::Weak).await;
                         let mut decision = VoteDecision::new(0, BTreeSet::new(), VoteType::Weak, false);
+                        let mut next_round_tally = Tally::new(BTreeSet::new(), false, 0, 0, 0, 0);
+                        let mut new_tally = Tally::new(BTreeSet::new(), false, 0, 0, 0, 0);
                         match self.votes.get(&vote.round) {
                             Some(tally) => {
                                 match tally.votes.iter().find(|x| x.author == vote.author) {
@@ -328,59 +386,55 @@ impl Core {
                                             Err(e) => info!("Signature of vote {} is not valid!", &vote.digest()),
                                         }
                                         is_proof_valid = self.validate_proof(vote.clone()).await;
-
-                                        if is_signature_valid && is_proof_valid {
-                                            self.tally_vote(vote.clone()).await;
-                                            if !tally.voted {
-                                                match self.decided_txs.get(&vote.tx.clone()) {
-                                                    Some(d) => {
-                                                        decision.decided = true;
-                                                        decision.decision = *d.get(&self.name).unwrap();
-                                                        decision.decision_type = VoteType::Strong;
-                                                        decision.proof = self.votes.get(&(vote.round - 1)).unwrap().votes.clone();
-                                                    }
-                                                    None => {
-                                                        decision = self.make_decision(vote.round).await;
-                                                        //if decision.decided {
-                                                            //let mut hp = HashMap::new();
-                                                            //hp.insert(self.name, decision.decision);
-                                                            //self.decided_txs.insert(vote.tx.clone(), hp);
-                                                            //self.broadcast_message(PrimaryMessage::Decision((vote.tx.clone(), self.name, decision.decision))).await;
-                                                        //}
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        /// Vote next round
-                                        if tally.votes.len() >= 3 {
-
-                                        }
                                     }
                                 }
                             }
                             None => {
                                 /// Validate signature
                                 match vote.signature.verify(&vote.digest(), &vote.author) {
-                                    Ok(()) => info!("Signature of vote {} is valid!", &vote.digest()),
+                                    Ok(()) => {
+                                        info!("Signature of vote {} is valid!", &vote.digest());
+                                        is_signature_valid = true;
+                                    }
                                     Err(e) => info!("Signature of vote {} is not valid!", &vote.digest()),
                                 }
-                                /// Validate proof
-                                self.validate_proof(vote.clone()).await;
+                                is_proof_valid = self.validate_proof(vote.clone()).await;
                             }
                         }
-                        vote.decision = decision.decision;
-                        vote.proof = decision.proof;
-                        vote.vote_type = decision.decision_type;
-                        self.broadcast_message(PrimaryMessage::Vote(vote.clone())).await;
-                        let new_tally = self.tally_vote(vote.clone()).await;
-                        self.votes.insert(vote.round, new_tally);
-                        let new_decision = self.make_decision(vote.round).await;
-                        if new_decision.decided {
-                            let mut hp = HashMap::new();
-                            hp.insert(self.name, decision.decision);
-                            self.decided_txs.insert(vote.tx.clone(), hp);
-                            self.broadcast_message(PrimaryMessage::Decision((vote.tx.clone(), self.name, new_decision.decision))).await;
+                        if is_signature_valid && is_proof_valid {
+                            new_tally = self.tally_vote(vote.clone()).await;
+                            self.votes.insert(vote.round, new_tally.clone());
+                            if !next_round_tally.voted && new_tally.votes.len() >= 3 {
+                                if self.decided_txs.contains_key(&vote.tx.clone()) {
+                                    match self.decided_txs.get(&vote.tx.clone()).unwrap().get(&self.name) {
+                                        Some(d) => {
+                                            decision.decided = true;
+                                            decision.decision = *d;
+                                            decision.decision_type = VoteType::Strong;
+                                            decision.proof = self.votes.get(&(vote.round - 1)).unwrap().votes.clone();
+                                        }
+                                        None => {
+                                            decision = self.make_decision(vote.round).await;
+                                        }
+                                    }
+                                }
+                                else {
+                                    decision = self.make_decision(vote.round).await;
+                                }
+                                own_vote.decision = decision.decision;
+                                own_vote.proof = decision.proof;
+                                own_vote.vote_type = decision.decision_type;
+                                self.broadcast_message(PrimaryMessage::Vote(own_vote.clone())).await;
+                                next_round_tally = self.tally_vote(own_vote.clone()).await;
+                                self.votes.insert(own_vote.round, next_round_tally);
+                            }
+                            //let new_decision = self.make_decision(vote.round).await;
+                            if decision.decided {
+                                let mut hp = HashMap::new();
+                                hp.insert(self.name, decision.decision);
+                                self.decided_txs.insert(vote.tx.clone(), hp);
+                                self.broadcast_message(PrimaryMessage::Decision((vote.tx.clone(), self.name, decision.decision))).await;
+                            }
                         }
                     }
                     /*else if !self.byzantine_node {
@@ -648,7 +702,7 @@ impl Core {
                 },
 
                 // Assemble client transactions into batches of preset size.
-                Some(transactions) = self.rx_transaction.recv() => {
+                /*Some(transactions) = self.rx_transaction.recv() => {
                     for transaction in transactions {
                         info!("Received tx {:?}", transaction.digest().0);
 
@@ -781,7 +835,7 @@ impl Core {
                             timer.as_mut().reset(Instant::now() + Duration::from_millis(self.max_batch_delay));
                         }*/
                     }
-                },
+                },*/
 
                 // If the timer triggers, seal the batch even if it contains few transactions.
                 /*() = &mut timer => {
