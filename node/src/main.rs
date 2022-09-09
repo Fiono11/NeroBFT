@@ -7,7 +7,7 @@ use env_logger::Env;
 use log::info;
 use store::Store;
 use tokio::sync::mpsc::{channel, Receiver};
-use primary::{Primary, BlockHash, Vote};
+use primary::{Primary, BlockHash, PrimaryVote};
 
 /// The default channel capacity.
 pub const CHANNEL_CAPACITY: usize = 1_000;
@@ -112,7 +112,7 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
 }
 
 /// Receives an ordered list of certificates and apply any application-specific logic.
-async fn analyze(mut rx_output: Receiver<Vote>) {
+async fn analyze(mut rx_output: Receiver<PrimaryVote>) {
     while let Some(tx) = rx_output.recv().await {
         // NOTE: Here goes the application logic.
         info!("Confirmed tx: {:#?}", tx);

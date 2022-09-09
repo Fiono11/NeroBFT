@@ -13,7 +13,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use crate::BlockHash;
 use crate::core::Core;
 use crate::error::DagError;
-use crate::messages::{PrimaryMessage, Transaction, Vote};
+use crate::messages::{PrimaryMessage, Transaction, PrimaryVote};
 
 /// The default channel capacity for each channel of the worker.
 pub const CHANNEL_CAPACITY: usize = 1_000;
@@ -101,7 +101,7 @@ impl Primary {
     }
 
     /// Spawn all tasks responsible to handle clients transactions.
-    fn handle_messages(&self, tx_batch_maker: Sender<Vec<Transaction>>, tx_votes: Sender<Vote>, tx_decisions: Sender<(BlockHash, PublicKey, usize)>) {
+    fn handle_messages(&self, tx_batch_maker: Sender<Vec<Transaction>>, tx_votes: Sender<PrimaryVote>, tx_decisions: Sender<(BlockHash, PublicKey, usize)>) {
         // We first receive clients' transactions from the network.
         let mut address = self
             .committee
@@ -125,7 +125,7 @@ impl Primary {
 #[derive(Clone)]
 struct TxReceiverHandler {
     tx_batch_maker: Sender<Vec<Transaction>>,
-    tx_votes: Sender<Vote>,
+    tx_votes: Sender<PrimaryVote>,
     tx_decisions: Sender<(BlockHash, PublicKey, usize)>
     // only one channel for primary messages
 }

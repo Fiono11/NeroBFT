@@ -37,7 +37,7 @@ pub struct Transaction {
     pub timestamp: u64,
     pub payload: Payload,
     pub parent: ParentHash,
-    pub votes: BTreeSet<Vote>,
+    pub votes: BTreeSet<PrimaryVote>,
 }
 
 impl fmt::Debug for Transaction {
@@ -70,7 +70,7 @@ impl Transaction {
         self.parent.clone()
     }
 
-    pub fn votes(&self) -> BTreeSet<Vote>{
+    pub fn votes(&self) -> BTreeSet<PrimaryVote>{
         self.votes.clone()
     }
 
@@ -89,14 +89,14 @@ impl Transaction {
 }
 
 #[derive(Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq)]
-pub struct Vote {
+pub struct PrimaryVote {
     pub tx: BlockHash,
     pub decision: usize,
     pub author: PublicKey,
     pub origin: PublicKey,
     pub signature: Signature,
     pub round: usize,
-    pub proof: BTreeSet<Vote>,
+    pub proof: BTreeSet<PrimaryVote>,
     pub vote_type: VoteType,
 }
 
@@ -106,7 +106,7 @@ pub enum VoteType {
     Strong
 }
 
-impl Vote {
+impl PrimaryVote {
     pub async fn new(
         id: BlockHash,
         decision: usize,
@@ -114,7 +114,7 @@ impl Vote {
         origin: &PublicKey,
         signature_service: &mut SignatureService,
         round: usize,
-        proof: BTreeSet<Vote>,
+        proof: BTreeSet<PrimaryVote>,
         vote_type: VoteType,
     ) -> Self {
         let vote = Self {
@@ -145,15 +145,16 @@ impl Vote {
     }
 }
 
-impl Hash for Vote {
+impl Hash for PrimaryVote {
     fn digest(&self) -> Digest {
         let mut hasher = Sha512::new();
         hasher.update(&self.tx);
+        // add other components of the vote
         Digest(hasher.finalize().as_slice()[..32].try_into().unwrap())
     }
 }
 
-impl fmt::Debug for Vote {
+impl fmt::Debug for PrimaryVote {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(
             f,
@@ -173,7 +174,7 @@ impl fmt::Debug for Vote {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum PrimaryMessage {
-    Vote(Vote),
+    Vote(PrimaryVote),
     //StrongVote(Vote),
     Transactions(Vec<Transaction>),
     Decision((BlockHash, PublicKey, usize))

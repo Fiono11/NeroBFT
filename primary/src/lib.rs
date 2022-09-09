@@ -4,7 +4,7 @@ mod messages;
 mod error;
 mod elections;
 
-pub use messages::{Transaction, Payload, BlockHash, ParentHash, Vote, PrimaryMessage};
+pub use messages::{Transaction, Payload, BlockHash, ParentHash, PrimaryVote, PrimaryMessage};
 pub use primary::Primary;
 pub use crate::core::now;
 

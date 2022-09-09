@@ -13,11 +13,14 @@ use network::SimpleSender;
 use crate::elections::Election;
 use crate::messages::{Batch, PrimaryMessage, VoteType};
 use config::Authority;
-use crate::messages::Vote;
+use crate::messages::PrimaryVote;
 use crypto::Digest;
 use std::convert::TryFrom;
 use rand::{Rng, thread_rng};
 use crate::messages::VoteType::{Strong, Weak};
+use crypto::Hash;
+use crate::PrimaryMessage::{Decision, Vote};
+use async_recursion::async_recursion;
 
 //#[cfg(test)]
 //#[path = "tests/batch_maker_tests.rs"]
@@ -48,21 +51,35 @@ pub struct Core {
     /// Election container
     elections: Election,
     /// Decided txs
-    decided_txs: BTreeSet<(BlockHash, PublicKey, usize)>,
+    decided_txs: HashMap<BlockHash, HashMap<PublicKey, usize>>,
     /// Network delay
     network_delay: u64,
     counter: u64,
-    rx_votes: Receiver<Vote>,
+    rx_votes: Receiver<PrimaryVote>,
     byzantine_node: bool,
     votes: HashMap<Round, Tally>,
     current_round: usize,
     rx_decisions: Receiver<(BlockHash, PublicKey, usize)>,
 }
 
+#[derive(Debug, Clone)]
+pub struct VoteDecision {
+    decision: usize,
+    proof: BTreeSet<PrimaryVote>,
+    decision_type: VoteType,
+    decided: bool,
+}
+
+impl VoteDecision {
+    pub fn new(decision: usize, proof: BTreeSet<PrimaryVote>, decision_type: VoteType, decided: bool) -> Self {
+        Self { decision, proof, decision_type, decided }
+    }
+}
+
 pub type Round = usize;
 
 pub struct Tally {
-    votes: BTreeSet<Vote>,
+    votes: BTreeSet<PrimaryVote>,
     voted: bool,
     weak_zeros: usize,
     weak_ones: usize,
@@ -71,7 +88,7 @@ pub struct Tally {
 }
 
 impl Tally {
-    pub fn new(votes: BTreeSet<Vote>, voted: bool, weak_zeros: usize, weak_ones: usize, strong_zeros: usize, strong_ones: usize) -> Self {
+    pub fn new(votes: BTreeSet<PrimaryVote>, voted: bool, weak_zeros: usize, weak_ones: usize, strong_zeros: usize, strong_ones: usize) -> Self {
         Self {
             votes, voted, weak_zeros, weak_ones, strong_zeros, strong_ones,
         }
@@ -88,7 +105,7 @@ impl Core {
         max_batch_delay: u64,
         rx_transaction: Receiver<Vec<Transaction>>,
         primary_addresses: Vec<(PublicKey, SocketAddr)>,
-        rx_votes: Receiver<Vote>,
+        rx_votes: Receiver<PrimaryVote>,
         byzantine_node: bool,
         rx_decisions: Receiver<(BlockHash, PublicKey, usize)>,
     ) {
@@ -105,7 +122,7 @@ impl Core {
                 current_batch_size: 0,
                 network: SimpleSender::new(),
                 elections: HashMap::new(),
-                decided_txs: BTreeSet::new(),
+                decided_txs: HashMap::new(),
                 network_delay: 200,
                 counter: 0,
                 rx_votes,
@@ -119,6 +136,154 @@ impl Core {
         });
     }
 
+    /// Broadcast message
+    async fn broadcast_message(&mut self, message: PrimaryMessage) {
+        let serialized = bincode::serialize(&message).expect("Failed to serialize our own vote");
+        let (names, mut addresses): (Vec<PublicKey>, Vec<SocketAddr>) = self.primary_addresses.iter().cloned().unzip();
+        let bytes = Bytes::from(serialized.clone());
+        if !addresses.is_empty() {
+            let delay = rand::thread_rng().gen_range(0..1000) as u64;
+            sleep(Duration::from_millis(delay)).await;
+            info!("Message {:?} sent to {:?} with a delay of {:?} ms", message, addresses, delay);
+            let handlers = self.network.broadcast(addresses, bytes).await;
+        }
+    }
+
+    /// Tally vote
+    async fn tally_vote(&self, vote: PrimaryVote) -> Tally {
+        let mut new_tally = Tally::new(BTreeSet::new(), false, 0, 0, 0, 0);
+        match self.votes.get(&vote.round) {
+            Some(tally) => {
+                new_tally = Tally::new(tally.votes.clone(), tally.voted, tally.weak_zeros, tally.weak_ones, tally.strong_zeros, tally.strong_ones);
+                new_tally.votes.insert(vote.clone());
+                if vote.author == self.name {
+                    new_tally.voted = true;
+                }
+                if vote.decision == 0 && vote.vote_type == VoteType::Weak {
+                    new_tally.weak_zeros += 1;
+                }
+                else if vote.decision == 1 && vote.vote_type == VoteType::Weak {
+                    new_tally.weak_ones += 1;
+                }
+                else if vote.decision == 0 && vote.vote_type == VoteType::Strong {
+                    new_tally.strong_zeros += 1;
+                }
+                else if vote.decision == 1 && vote.vote_type == VoteType::Strong {
+                    new_tally.strong_ones += 1;
+                }
+                return new_tally;
+            }
+            None => {
+                let mut votes = BTreeSet::new();
+                votes.insert(vote.clone());
+                let mut voted = false;
+                if vote.author == self.name {
+                    voted = true;
+                }
+                if vote.decision == 0 && vote.vote_type == VoteType::Weak {
+                    return Tally::new(votes, voted, 1, 0, 0, 0);
+                }
+                else if vote.decision == 1 && vote.vote_type == VoteType::Weak {
+                    return Tally::new(votes, voted, 0, 1, 0, 0);
+                }
+                else if vote.decision == 0 && vote.vote_type == VoteType::Strong {
+                    return Tally::new(votes, voted, 0, 0, 1, 0);
+                }
+                else if vote.decision == 1 && vote.vote_type == VoteType::Strong {
+                    return Tally::new(votes, voted, 0, 0, 0, 1);
+                }
+            }
+        }
+        new_tally
+    }
+
+    async fn make_decision(&self, round: usize) -> VoteDecision {
+        let mut decision = VoteDecision::new(0, BTreeSet::new(), VoteType::Weak, false);
+        match self.votes.get(&round) {
+            Some(tally) => {
+                decision.proof = self.votes.get(&(round - 1)).unwrap().votes.clone();
+                if tally.strong_ones >= 3 {
+                    decision.decision = 1;
+                    decision.decision_type = VoteType::Strong;
+                    decision.decided = true;
+                }
+                else if tally.strong_zeros >= 3 {
+                    decision.decision_type = VoteType::Strong;
+                    decision.decided = true;
+                }
+                else if tally.weak_zeros >= 3 {
+                    decision.decision_type = VoteType::Strong;
+                }
+                else if tally.weak_ones >= 3 {
+                    decision.decision = 1;
+                    decision.decision_type = VoteType::Strong;
+                }
+                else if tally.weak_zeros + tally.strong_zeros < tally.weak_ones + tally.strong_ones {
+                    decision.decision = 1;
+                }
+            }
+            None => {
+                let random_decision = rand::thread_rng().gen_range(0..2) as usize;
+                return VoteDecision::new(random_decision, BTreeSet::new(), VoteType::Weak, false);
+            }
+        }
+        decision
+    }
+
+    /// Validate vote proof
+    #[async_recursion]
+    async fn validate_proof(&self, v: PrimaryVote) -> bool {
+        let mut validations = vec![];
+        if v.round == 0 {
+            match v.signature.verify(&v.digest(), &v.author) {
+                Ok(()) => {
+                    info!("Signature of vote {} of proof is valid!", v.digest());
+                    validations.push(true);
+                },
+                Err(e) => {
+                    info!("Signature of vote {} of proof is not valid!", v.digest());
+                    return false;
+                },
+            }
+        }
+        else {
+            assert!(v.proof.len() >= 3);
+            match self.votes.get(&v.round) {
+                Some(t) => {
+                    if !t.votes.contains(&v) {
+                        validations.push(true);
+                    }
+                    else {
+                        for vote in &v.proof {
+                            if self.validate_proof(vote.clone()).await {
+                                validations.push(true);
+                            }
+                            else {
+                                return false;
+                            }
+                        }
+                    }
+                }
+                None => {
+                    for vote in &v.proof {
+                        if self.validate_proof(vote.clone()).await {
+                            validations.push(true);
+                        }
+                        else {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        if validations.len() == v.proof.len() {
+            return true;
+        }
+        else {
+            return false;
+        }
+    }
+
     /// Main loop receiving incoming transactions and creating batches.
     pub async fn run(&mut self) {
         let timer = sleep(Duration::from_millis(self.max_batch_delay));
@@ -128,114 +293,204 @@ impl Core {
             tokio::select! {
                 Some(decision) = self.rx_decisions.recv() => {
                     info!("Received a decision: {:#?}", decision);
-                    self.decided_txs.insert(decision);
+                    let mut hp = HashMap::new();
+                    hp.insert(decision.1, decision.2);
+                    self.decided_txs.insert(decision.0, hp);
                 }
 
                 Some(vote) = self.rx_votes.recv() => {
                     info!("Received a vote: {:#?}", vote);
+                    // send different votes to different nodes
+                    // validate votes
+                    // put round timer
+                    // flip asynchronicity
                     if self.byzantine_node && self.decided_txs.len() <= 2 {
-                        /// Initial random vote
-                        let decision = rand::thread_rng().gen_range(0..2);
-                        let first_own_vote = Vote::new(vote.tx, decision, &self.name, &self.name, &mut self.signature_service, 0, BTreeSet::new(), VoteType::Weak).await;
-                        let serialized = bincode::serialize(&PrimaryMessage::Vote(first_own_vote.clone())).expect("Failed to serialize our own vote");
-
-                        // Send the initial vote to all nodes
-                        /// Send the initial vote to 2f random nodes
-                        let (names, mut addresses): (Vec<PublicKey>, Vec<SocketAddr>) = self.primary_addresses.iter().cloned().unzip();
-                        /*let len = addresses.len();
-                        for i in 0..len - 2 * 1 {
-                            let random = thread_rng().gen_range(0..addresses.len());
-                            addresses.remove(random);
-                        }*/
-                        let bytes = Bytes::from(serialized.clone());
-                        if !addresses.is_empty() {
-                            let delay = rand::thread_rng().gen_range(0..1000);
-                            sleep(Duration::from_millis(delay)).await;
-                            info!("Vote {:?} sent to {:?} with a delay of {}", first_own_vote, addresses, delay);
-                            let handlers = self.network.broadcast(addresses, bytes).await;
-                        }
+                        let random_decision = rand::thread_rng().gen_range(0..2);
+                        let byzantine_vote = PrimaryVote::new(vote.tx.clone(), random_decision, &self.name, &self.name, &mut self.signature_service, 0, BTreeSet::new(), VoteType::Weak).await;
+                        self.broadcast_message(PrimaryMessage::Vote(byzantine_vote)).await;
                     }
-                    else if !self.byzantine_node {
+                    if !self.byzantine_node && self.decided_txs.len() <= 2 {
+                        let mut is_signature_valid = false;
+                        let mut is_proof_valid = false;
+                        let mut vote = PrimaryVote::new(vote.tx.clone(), 0, &self.name, &self.name, &mut self.signature_service, vote.round, BTreeSet::new(), VoteType::Weak).await;
+                        let mut decision = VoteDecision::new(0, BTreeSet::new(), VoteType::Weak, false);
                         match self.votes.get(&vote.round) {
                             Some(tally) => {
-                                let mut weak_zeros = tally.weak_zeros;
-                                let mut weak_ones = tally.weak_ones;
-                                let mut strong_zeros = tally.strong_zeros;
-                                let mut strong_ones = tally.strong_ones;
-                                let author = vote.author;
-                                match tally.votes.iter().find(|x| x.author == author) {
-                                    Some(vote) => info!("Vote of node {} in round {} was already tallied!", author, vote.round),
+                                match tally.votes.iter().find(|x| x.author == vote.author) {
+                                    Some(v) => info!("Vote of node {} in round {} was already tallied!", vote.author, vote.round),
                                     None => {
-                                        if vote.decision == 0 && vote.vote_type == VoteType::Weak {
-                                        weak_zeros += 1;
+                                        /// Validate signature
+                                        match vote.signature.verify(&vote.digest(), &vote.author) {
+                                            Ok(()) => {
+                                                info!("Signature of vote {} is valid!", &vote.digest());
+                                                is_signature_valid = true;
+                                            }
+                                            Err(e) => info!("Signature of vote {} is not valid!", &vote.digest()),
                                         }
-                                        if vote.decision == 1 && vote.vote_type == VoteType::Weak {
-                                            weak_ones += 1;
+                                        is_proof_valid = self.validate_proof(vote.clone()).await;
+
+                                        if is_signature_valid && is_proof_valid {
+                                            self.tally_vote(vote.clone()).await;
+                                            if !tally.voted {
+                                                match self.decided_txs.get(&vote.tx.clone()) {
+                                                    Some(d) => {
+                                                        decision.decided = true;
+                                                        decision.decision = *d.get(&self.name).unwrap();
+                                                        decision.decision_type = VoteType::Strong;
+                                                        decision.proof = self.votes.get(&(vote.round - 1)).unwrap().votes.clone();
+                                                    }
+                                                    None => {
+                                                        decision = self.make_decision(vote.round).await;
+                                                        //if decision.decided {
+                                                            //let mut hp = HashMap::new();
+                                                            //hp.insert(self.name, decision.decision);
+                                                            //self.decided_txs.insert(vote.tx.clone(), hp);
+                                                            //self.broadcast_message(PrimaryMessage::Decision((vote.tx.clone(), self.name, decision.decision))).await;
+                                                        //}
+                                                    }
+                                                }
+                                            }
                                         }
-                                        if vote.decision == 0 && vote.vote_type == VoteType::Strong {
-                                            strong_zeros += 1;
-                                        }
-                                        if vote.decision == 1 && vote.vote_type == VoteType::Strong {
-                                            strong_ones += 1;
-                                        }
-                                        let mut votes_of_the_round_of_the_vote_received = tally.votes.clone();
-                                        votes_of_the_round_of_the_vote_received.insert(vote.clone());
-                                        self.votes.insert(vote.round, Tally::new(votes_of_the_round_of_the_vote_received.clone(), tally.voted, weak_zeros, weak_ones, strong_zeros, strong_ones));
-                                        info!("Tx {:?} has {} weak zeros, {} weak ones, {} strong zeros and {} strong ones in round {}", vote.tx, weak_zeros, weak_ones, strong_zeros, strong_ones, vote.round);
-                                    }
-                                }
-                                if !self.decided_txs.contains(&(vote.tx.clone(), self.name, 0)) && !self.decided_txs.contains(&(vote.tx.clone(), self.name, 1)) {
-                                    if strong_ones >= 3 {
-                                        self.decided_txs.insert((vote.tx.clone(), self.name, 1));
-                                        info!("Confirmed {:?} in round {}!", vote.tx.clone(), vote.round);
-                                        let serialized = bincode::serialize(&PrimaryMessage::Decision((vote.tx.clone(), self.name, 1))).expect("Failed to serialize our own vote");
-                                        let (names, mut addresses): (Vec<PublicKey>, Vec<SocketAddr>) = self.primary_addresses.iter().cloned().unzip();
-                                        let bytes = Bytes::from(serialized.clone());
-                                        if !addresses.is_empty() {
-                                            let delay = rand::thread_rng().gen_range(0..1000);
-                                            sleep(Duration::from_millis(delay)).await;
-                                            info!("Decision {:?} sent to {:?} with a delay of {}", 1, addresses, delay);
-                                            let handlers = self.network.broadcast(addresses, bytes).await;
-                                        }
-                                    }
-                                    if strong_zeros >= 3 {
-                                        self.decided_txs.insert((vote.tx.clone(), self.name, 0));
-                                        info!("Rejected {:?} in round {}!", vote.tx.clone(), vote.round);
-                                        let serialized = bincode::serialize(&PrimaryMessage::Decision((vote.tx.clone(), self.name, 0))).expect("Failed to serialize our own vote");
-                                        let (names, mut addresses): (Vec<PublicKey>, Vec<SocketAddr>) = self.primary_addresses.iter().cloned().unzip();
-                                        let bytes = Bytes::from(serialized.clone());
-                                        if !addresses.is_empty() {
-                                            let delay = rand::thread_rng().gen_range(0..1000);
-                                            sleep(Duration::from_millis(delay)).await;
-                                            info!("Decision {:?} sent to {:?} with a delay of {}", 0, addresses, delay);
-                                            let handlers = self.network.broadcast(addresses, bytes).await;
+
+                                        /// Vote next round
+                                        if tally.votes.len() >= 3 {
+
                                         }
                                     }
                                 }
                             }
                             None => {
-                                let mut weak_zeros = 0;
-                                let mut weak_ones = 0;
-                                let mut strong_zeros = 0;
-                                let mut strong_ones = 0;
-                                if vote.decision == 0 && vote.vote_type == VoteType::Weak {
-                                    weak_zeros += 1;
+                                /// Validate signature
+                                match vote.signature.verify(&vote.digest(), &vote.author) {
+                                    Ok(()) => info!("Signature of vote {} is valid!", &vote.digest()),
+                                    Err(e) => info!("Signature of vote {} is not valid!", &vote.digest()),
                                 }
-                                if vote.decision == 1 && vote.vote_type == VoteType::Weak {
-                                    weak_ones += 1;
-                                }
-                                if vote.decision == 0 && vote.vote_type == VoteType::Strong {
-                                    strong_zeros += 1;
-                                }
-                                if vote.decision == 1 && vote.vote_type == VoteType::Strong {
-                                    strong_ones += 1;
-                                }
-                                let mut votes = BTreeSet::new();
-                                votes.insert(vote.clone());
-                                self.votes.insert(vote.round, Tally::new(votes, false, weak_zeros, weak_ones, strong_zeros, strong_ones));
+                                /// Validate proof
+                                self.validate_proof(vote.clone()).await;
                             }
                         }
-                        //info!("votes: {:?}", self.votes);
+                        vote.decision = decision.decision;
+                        vote.proof = decision.proof;
+                        vote.vote_type = decision.decision_type;
+                        self.broadcast_message(PrimaryMessage::Vote(vote.clone())).await;
+                        let new_tally = self.tally_vote(vote.clone()).await;
+                        self.votes.insert(vote.round, new_tally);
+                        let new_decision = self.make_decision(vote.round).await;
+                        if new_decision.decided {
+                            let mut hp = HashMap::new();
+                            hp.insert(self.name, decision.decision);
+                            self.decided_txs.insert(vote.tx.clone(), hp);
+                            self.broadcast_message(PrimaryMessage::Decision((vote.tx.clone(), self.name, new_decision.decision))).await;
+                        }
+                    }
+                    /*else if !self.byzantine_node {
+                        //if validations.len() == vote.proof.len() {
+                            match self.votes.get(&vote.round) {
+                                Some(tally) => {
+                                    let mut weak_zeros = tally.weak_zeros;
+                                    let mut weak_ones = tally.weak_ones;
+                                    let mut strong_zeros = tally.strong_zeros;
+                                    let mut strong_ones = tally.strong_ones;
+                                    let author = vote.author;
+                                    match tally.votes.iter().find(|x| x.author == author) {
+                                        Some(vote) => info!("Vote of node {} in round {} was already tallied!", author, vote.round),
+                                        None => {
+                                            /// Validate signature
+                                            match vote.signature.verify(&vote.digest(), &vote.author) {
+                                                Ok(()) => info!("Signature of vote {} is valid!", &vote.digest()),
+                                                Err(e) => info!("Signature of vote {} is not valid!", &vote.digest()),
+                                            }
+
+                                            let mut validations = vec![];
+
+                                            /// Validate proof
+                                            if vote.round != 0 {
+                                                for v in &vote.proof {
+                                                    let mut validated = false;
+                                                    for i in (0..v.round).rev() {
+                                                        if self.validate_proof(i, v.clone()).await {
+                                                            validated = true;
+                                                            validations.push(validated);
+                                                            info!("{:?} proof of vote {} is valid!", v, &vote.digest());
+                                                            break;
+                                                        }
+                                                    }
+                                                    if !validated {
+                                                        info!("{:?} proof of vote {} is not valid!", v, &vote.digest());
+                                                    }
+                                                }
+                                            }
+                                            if vote.decision == 0 && vote.vote_type == VoteType::Weak {
+                                            weak_zeros += 1;
+                                            }
+                                            if vote.decision == 1 && vote.vote_type == VoteType::Weak {
+                                                weak_ones += 1;
+                                            }
+                                            if vote.decision == 0 && vote.vote_type == VoteType::Strong {
+                                                strong_zeros += 1;
+                                            }
+                                            if vote.decision == 1 && vote.vote_type == VoteType::Strong {
+                                                strong_ones += 1;
+                                            }
+                                            let mut votes_of_the_round_of_the_vote_received = tally.votes.clone();
+                                            votes_of_the_round_of_the_vote_received.insert(vote.clone());
+                                            self.votes.insert(vote.round, Tally::new(votes_of_the_round_of_the_vote_received.clone(), tally.voted, weak_zeros, weak_ones, strong_zeros, strong_ones));
+                                            info!("Tx {:?} has {} weak zeros, {} weak ones, {} strong zeros and {} strong ones in round {}", vote.tx, weak_zeros, weak_ones, strong_zeros, strong_ones, vote.round);
+                                        }
+                                    }
+                                    if !self.decided_txs.contains(&(vote.tx.clone(), self.name, 0)) && !self.decided_txs.contains(&(vote.tx.clone(), self.name, 1)) {
+                                        if strong_ones >= 3 {
+                                            self.decided_txs.insert((vote.tx.clone(), self.name, 1));
+                                            info!("Confirmed {:?} in round {}!", vote.tx.clone(), vote.round);
+                                            let serialized = bincode::serialize(&PrimaryMessage::Decision((vote.tx.clone(), self.name, 1))).expect("Failed to serialize our own vote");
+                                            let (names, mut addresses): (Vec<PublicKey>, Vec<SocketAddr>) = self.primary_addresses.iter().cloned().unzip();
+                                            let bytes = Bytes::from(serialized.clone());
+                                            if !addresses.is_empty() {
+                                                let delay = rand::thread_rng().gen_range(0..1000);
+                                                sleep(Duration::from_millis(delay)).await;
+                                                info!("Decision {:?} sent to {:?} with a delay of {:?} ms", 1, addresses, delay);
+                                                let handlers = self.network.broadcast(addresses, bytes).await;
+                                            }
+                                        }
+                                        if strong_zeros >= 3 {
+                                            self.decided_txs.insert((vote.tx.clone(), self.name, 0));
+                                            info!("Rejected {:?} in round {}!", vote.tx.clone(), vote.round);
+                                            let serialized = bincode::serialize(&PrimaryMessage::Decision((vote.tx.clone(), self.name, 0))).expect("Failed to serialize our own vote");
+                                            let (names, mut addresses): (Vec<PublicKey>, Vec<SocketAddr>) = self.primary_addresses.iter().cloned().unzip();
+                                            let bytes = Bytes::from(serialized.clone());
+                                            if !addresses.is_empty() {
+                                                let delay = rand::thread_rng().gen_range(0..1000);
+                                                sleep(Duration::from_millis(delay)).await;
+                                                info!("Decision {:?} sent to {:?} with a delay of {:?} ms", 0, addresses, delay);
+                                                let handlers = self.network.broadcast(addresses, bytes).await;
+                                            }
+                                        }
+                                    }
+                                }
+                                None => {
+                                    let mut weak_zeros = 0;
+                                    let mut weak_ones = 0;
+                                    let mut strong_zeros = 0;
+                                    let mut strong_ones = 0;
+                                    if vote.decision == 0 && vote.vote_type == VoteType::Weak {
+                                        weak_zeros += 1;
+                                    }
+                                    if vote.decision == 1 && vote.vote_type == VoteType::Weak {
+                                        weak_ones += 1;
+                                    }
+                                    if vote.decision == 0 && vote.vote_type == VoteType::Strong {
+                                        strong_zeros += 1;
+                                    }
+                                    if vote.decision == 1 && vote.vote_type == VoteType::Strong {
+                                        strong_ones += 1;
+                                    }
+                                    let mut votes = BTreeSet::new();
+                                    votes.insert(vote.clone());
+                                    self.votes.insert(vote.round, Tally::new(votes, false, weak_zeros, weak_ones, strong_zeros, strong_ones));
+                                }
+                            }
+                        //}
+
                         let mut decision = 0;
                         let mut vote_type = VoteType::Weak;
                         let tally = self.votes.get(&vote.round).unwrap();
@@ -285,7 +540,7 @@ impl Core {
 
                                     for vote in votes_of_the_round_of_the_vote_received {
                                         let mut new_vote = vote.clone();
-                                        new_vote.proof = BTreeSet::new();
+                                        //new_vote.proof = BTreeSet::new();
                                         if new_vote.round == round {
                                             new_votes_of_the_current_round.insert(new_vote);
                                         }
@@ -326,7 +581,7 @@ impl Core {
                                                     if !addresses.is_empty() {
                                                         let delay = rand::thread_rng().gen_range(0..1000);
                                                         sleep(Duration::from_millis(delay)).await;
-                                                        info!("Decision {:?} sent to {:?} with a delay of {}", decision, addresses, delay);
+                                                        info!("Decision {:?} sent to {:?} with a delay of {:?} ms", decision, addresses, delay);
                                                         let handlers = self.network.broadcast(addresses, bytes).await;
                                                     }
                                                 }
@@ -339,7 +594,7 @@ impl Core {
                                                     if !addresses.is_empty() {
                                                         let delay = rand::thread_rng().gen_range(0..1000);
                                                         sleep(Duration::from_millis(delay)).await;
-                                                        info!("Decision {:?} sent to {:?} with a delay of {}", decision, addresses, delay);
+                                                        info!("Decision {:?} sent to {:?} with a delay of {:?} ms", decision, addresses, delay);
                                                         let handlers = self.network.broadcast(addresses, bytes).await;
                                                     }
                                                 }
@@ -382,14 +637,14 @@ impl Core {
                                     if !addresses.is_empty() {
                                         let delay = rand::thread_rng().gen_range(0..1000);
                                         sleep(Duration::from_millis(delay)).await;
-                                        info!("Vote {:?} sent to {:?} with a delay of {}", own_vote, addresses, delay);
+                                        info!("Vote {:?} sent to {:?} with a delay of {:?} ms", own_vote, addresses, delay);
                                         let handlers = self.network.broadcast(addresses, bytes).await;
                                     }
                                 //self.current_round += 1;
                                 }
                             }
                         }
-                    }
+                    }*/
                 },
 
                 // Assemble client transactions into batches of preset size.
@@ -399,7 +654,7 @@ impl Core {
 
                         /// Initial random vote
                         let decision = rand::thread_rng().gen_range(0..2);
-                        let first_own_vote = Vote::new(transaction.digest(), decision, &self.name, &self.name, &mut self.signature_service, 0, BTreeSet::new(), VoteType::Weak).await;
+                        let first_own_vote = PrimaryVote::new(transaction.digest(), decision, &self.name, &self.name, &mut self.signature_service, 0, BTreeSet::new(), VoteType::Weak).await;
                         match self.votes.get(&0) {
                             Some(tally) => {
                                 let mut weak_zeros = tally.weak_zeros;
@@ -446,7 +701,7 @@ impl Core {
                         if !addresses.is_empty() {
                             let delay = rand::thread_rng().gen_range(0..1000);
                             sleep(Duration::from_millis(delay)).await;
-                            info!("Vote {:?} sent to {:?} with a delay of {}", first_own_vote, addresses, delay);
+                            info!("Vote {:?} sent to {:?} with a delay of {:?} ms", first_own_vote, addresses, delay);
                             let handlers = self.network.broadcast(addresses, bytes).await;
                         }
 
