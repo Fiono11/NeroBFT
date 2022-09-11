@@ -333,7 +333,7 @@ impl Core {
                 Some(transactions) = self.rx_transaction.recv() => {
                     for transaction in transactions {
                         info!("Received tx {:?}", transaction.digest().0);
-                        self.db.db().set(transaction.digest().0.to_string(), Some(Duration::from_secs(2)));
+                        self.db.db().set(transaction.digest().0.to_string(), 0, Some(Duration::from_secs(2)));
 
                         /// Initial random vote
                         let decision = rand::thread_rng().gen_range(0..2);
@@ -432,7 +432,7 @@ impl Core {
                                 self.votes.insert(own_vote.round, next_round_tally);
                                 /// Reset timer
                                 timer.as_mut().reset(Instant::now() + Duration::from_millis(self.max_batch_delay));
-                                self.current_round += 1;
+                                //self.current_round += 1;
                             }
                             else {
                                 decision = self.make_decision(vote.round).await;
@@ -448,7 +448,7 @@ impl Core {
                 }
 
                 () = &mut timer => {
-                    for ((_, _), tx) in &self.db.db().shared.state.lock().await.expirations {
+                    for ((_, _), (tx, round)) in &self.db.db().shared.state.lock().await.expirations {
                         let block_hash = BlockHash(Digest::try_from(tx.as_bytes()).unwrap());
                         let mut own_vote = PrimaryVote::new(block_hash.clone(), 0, &self.name, &self.name, &mut self.signature_service, self.current_round + 1, BTreeSet::new(), VoteType::Weak).await;
                         let mut decision = VoteDecision::new(0, BTreeSet::new(), VoteType::Weak, false);
@@ -465,15 +465,15 @@ impl Core {
                                         decision.decided = true;
                                         decision.decision = *d;
                                         decision.decision_type = VoteType::Strong;
-                                        decision.proof = self.votes.get(&(self.current_round - 1)).unwrap().votes.clone();
+                                        decision.proof = self.votes.get(&(round - 1)).unwrap().votes.clone();
                                     }
                                     None => {
-                                        decision = self.make_decision(self.current_round).await;
+                                        decision = self.make_decision(*round).await;
                                     }
                                 }
                             }
                             else {
-                                decision = self.make_decision(self.current_round).await;
+                                decision = self.make_decision(*round).await;
                             }
                             own_vote.decision = decision.decision;
                             own_vote.proof = decision.proof;
@@ -483,10 +483,11 @@ impl Core {
                             self.votes.insert(own_vote.round, next_round_tally);
                             /// Reset timer
                             timer.as_mut().reset(Instant::now() + Duration::from_millis(self.max_batch_delay));
-                            self.current_round += 1;
+                            self.db.db().set(tx.clone(), round + 1, Some(Duration::from_secs(2)));
+                            //self.current_round += 1;
                         }
                         else {
-                            decision = self.make_decision(self.current_round).await;
+                            decision = self.make_decision(*round).await;
                         }
                         if decision.decided {
                             let mut hp = HashMap::new();

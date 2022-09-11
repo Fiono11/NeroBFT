@@ -83,7 +83,7 @@ pub struct State {
     /// created for the same instant. Because of this, the `Instant` is
     /// insufficient for the key. A unique expiration identifier (`u64`) is used
     /// to break these ties.
-    pub expirations: BTreeMap<(Instant, u64), String>,
+    pub expirations: BTreeMap<(Instant, u64), (String, usize)>,
 
     /// Identifier to use for the next expiration. Each expiration is associated
     /// with a unique identifier. See above for why.
@@ -101,8 +101,8 @@ struct Entry {
     /// Uniquely identifies this entry.
     id: u64,
 
-    // Stored data
-    //data: BlockHash,
+    /// Stored data
+    data: usize,
 
     /// Instant at which the entry expires and should be removed from the
     /// database.
@@ -169,7 +169,7 @@ impl Db {
     /// Duration.
     ///
     /// If a value is already associated with the key, it is removed.
-    pub(crate) async fn set(&self, key: String, expire: Option<Duration>) {
+    pub(crate) async fn set(&self, key: String, value: usize, expire: Option<Duration>) {
         let mut state = self.shared.state.lock().await;
 
         // Get and increment the next insertion ID. Guarded by the lock, this
@@ -197,7 +197,7 @@ impl Db {
                 .unwrap_or(true);
 
             // Track the expiration.
-            state.expirations.insert((when, id), key.clone());
+            state.expirations.insert((when, id), (key.clone(), value.clone()));
             when
         });
 
@@ -206,7 +206,7 @@ impl Db {
             key,
             Entry {
                 id,
-                //data: value,
+                data: value,
                 expires_at,
             },
         );
@@ -329,8 +329,8 @@ impl Shared {
             }
 
             // The key expired, remove it
-            state.entries.remove(key);
-            state.expirations.remove(&(when, id));
+            state.entries.remove(&key.0);
+            //state.expirations.remove(&(when, id));
         }
 
         None
