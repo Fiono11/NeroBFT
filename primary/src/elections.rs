@@ -1,11 +1,13 @@
 use config::Committee;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+//use std::sync::{Arc, Mutex};
 use tokio::time::{self, Duration, Instant};
-use tokio::sync::{broadcast, Notify};
-use crate::BlockHash;
+use tokio::sync::{broadcast, Notify, Mutex};
+use crate::{BlockHash, Transaction};
 use bytes::Bytes;
 use log::debug;
+use crate::core::Tally;
 use crate::messages::ParentHash;
 
 pub type Election = HashMap<ParentHash, (Committee, BlockHash)>;
@@ -36,11 +38,11 @@ pub(crate) struct DbDropGuard {
 pub(crate) struct Db {
     /// Handle to shared state. The background task will also have an
     /// `Arc<Shared>`.
-    shared: Arc<Shared>,
+    pub shared: Arc<Shared>,
 }
 
 #[derive(Debug)]
-struct Shared {
+pub struct Shared {
     /// The shared state is guarded by a mutex. This is a `std::sync::Mutex` and
     /// not a Tokio mutex. This is because there are no asynchronous operations
     /// being performed while holding the mutex. Additionally, the critical
@@ -53,7 +55,7 @@ struct Shared {
     /// operations), then the entire operation, including waiting for the mutex,
     /// is considered a "blocking" operation and `tokio::task::spawn_blocking`
     /// should be used.
-    state: Mutex<State>,
+    pub state: Mutex<State>,
 
     /// Notifies the background task handling entry expiration. The background
     /// task waits on this to be notified, then checks for expired values or the
@@ -62,7 +64,7 @@ struct Shared {
 }
 
 #[derive(Debug)]
-struct State {
+pub struct State {
     /// The key-value data. We are not trying to do anything fancy so a
     /// `std::collections::HashMap` works fine.
     entries: HashMap<String, Entry>,
@@ -81,7 +83,7 @@ struct State {
     /// created for the same instant. Because of this, the `Instant` is
     /// insufficient for the key. A unique expiration identifier (`u64`) is used
     /// to break these ties.
-    expirations: BTreeMap<(Instant, u64), String>,
+    pub expirations: BTreeMap<(Instant, u64), String>,
 
     /// Identifier to use for the next expiration. Each expiration is associated
     /// with a unique identifier. See above for why.
@@ -99,8 +101,8 @@ struct Entry {
     /// Uniquely identifies this entry.
     id: u64,
 
-    /// Stored data
-    data: Election,
+    // Stored data
+    //data: BlockHash,
 
     /// Instant at which the entry expires and should be removed from the
     /// database.
@@ -124,7 +126,7 @@ impl DbDropGuard {
 impl Drop for DbDropGuard {
     fn drop(&mut self) {
         // Signal the 'Db' instance to shut down the task that purges expired keys
-        self.db.shutdown_purge_task();
+        //self.db.shutdown_purge_task();
     }
 }
 
@@ -149,26 +151,26 @@ impl Db {
         Db { shared }
     }
 
-    /// Get the value associated with a key.
+    /*/// Get the value associated with a key.
     ///
     /// Returns `None` if there is no value associated with the key. This may be
     /// due to never having assigned a value to the key or a previously assigned
     /// value expired.
-    pub(crate) fn get(&self, key: &str) -> Option<Election> {
+    pub(crate) async fn get(&self, key: &str) -> Option<Election> {
         // Acquire the lock, get the entry and clone the value.
         //
         // Because data is stored using `Bytes`, a clone here is a shallow
         // clone. Data is not copied.
-        let state = self.shared.state.lock().unwrap();
+        let state = self.shared.state.lock().await;
         state.entries.get(key).map(|entry| entry.data.clone())
-    }
+    }*/
 
     /// Set the value associated with a key along with an optional expiration
     /// Duration.
     ///
     /// If a value is already associated with the key, it is removed.
-    pub(crate) fn set(&self, key: String, value: Election, expire: Option<Duration>) {
-        let mut state = self.shared.state.lock().unwrap();
+    pub(crate) async fn set(&self, key: String, expire: Option<Duration>) {
+        let mut state = self.shared.state.lock().await;
 
         // Get and increment the next insertion ID. Guarded by the lock, this
         // ensures a unique identifier is associated with each `set` operation.
@@ -204,7 +206,7 @@ impl Db {
             key,
             Entry {
                 id,
-                data: value,
+                //data: value,
                 expires_at,
             },
         );
@@ -231,7 +233,7 @@ impl Db {
         }
     }
 
-    /// Returns a `Receiver` for the requested channel.
+    /*/// Returns a `Receiver` for the requested channel.
     ///
     /// The returned `Receiver` is used to receive values broadcast by `PUBLISH`
     /// commands.
@@ -294,14 +296,14 @@ impl Db {
         // wake up only to be unable to acquire the mutex.
         drop(state);
         self.shared.background_task.notify_one();
-    }
+    }*/
 }
 
 impl Shared {
     /// Purge all expired keys and return the `Instant` at which the **next**
     /// key will expire. The background task will sleep until this instant.
-    fn purge_expired_keys(&self) -> Option<Instant> {
-        let mut state = self.state.lock().unwrap();
+    async fn purge_expired_keys(&self) -> Option<Instant> {
+        let mut state = self.state.lock().await;
 
         if state.shutdown {
             // The database is shutting down. All handles to the shared state
@@ -338,8 +340,8 @@ impl Shared {
     ///
     /// The `shutdown` flag is set when all `Db` values have dropped, indicating
     /// that the shared state can no longer be accessed.
-    fn is_shutdown(&self) -> bool {
-        self.state.lock().unwrap().shutdown
+    async fn is_shutdown(&self) -> bool {
+        self.state.lock().await.shutdown
     }
 }
 
@@ -358,11 +360,11 @@ impl State {
 /// state handle. If `shutdown` is set, terminate the task.
 async fn purge_expired_tasks(shared: Arc<Shared>) {
     // If the shutdown flag is set, then the task should exit.
-    while !shared.is_shutdown() {
+    while !shared.is_shutdown().await {
         // Purge all keys that are expired. The function returns the instant at
         // which the **next** key will expire. The worker should wait until the
         // instant has passed then purge again.
-        if let Some(when) = shared.purge_expired_keys() {
+        if let Some(when) = shared.purge_expired_keys().await {
             // Wait until the next key expires **or** until the background task
             // is notified. If the task is notified, then it must reload its
             // state as new keys have been set to expire early. This is done by

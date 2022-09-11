@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::{Instant, sleep};
 use network::SimpleSender;
-use crate::elections::Election;
+use crate::elections::{DbDropGuard, Election};
 use crate::messages::{Batch, PrimaryMessage, VoteType};
 use config::Authority;
 use crate::messages::PrimaryVote;
@@ -61,6 +61,7 @@ pub struct Core {
     votes: HashMap<Round, Tally>,
     current_round: usize,
     rx_decisions: Receiver<(BlockHash, PublicKey, usize)>,
+    db: DbDropGuard,
 }
 
 #[derive(Debug, Clone)]
@@ -132,6 +133,7 @@ impl Core {
                 votes: HashMap::new(),
                 current_round: 0,
                 rx_decisions,
+                db: DbDropGuard::new(),
             }
             .run()
             .await;
@@ -316,6 +318,8 @@ impl Core {
         let (names, mut addresses): (Vec<PublicKey>, Vec<SocketAddr>) = self.primary_addresses.iter().cloned().unzip();
         let timer = sleep(Duration::from_millis(self.max_batch_delay));
         tokio::pin!(timer);
+        //let db_holder = DbDropGuard::new();
+        //tokio::pin!(db_holder);
 
         loop {
             tokio::select! {
@@ -329,6 +333,7 @@ impl Core {
                 Some(transactions) = self.rx_transaction.recv() => {
                     for transaction in transactions {
                         info!("Received tx {:?}", transaction.digest().0);
+                        self.db.db().set(transaction.digest().0.to_string(), Some(Duration::from_secs(2)));
 
                         /// Initial random vote
                         let decision = rand::thread_rng().gen_range(0..2);
@@ -427,6 +432,7 @@ impl Core {
                                 self.votes.insert(own_vote.round, next_round_tally);
                                 /// Reset timer
                                 timer.as_mut().reset(Instant::now() + Duration::from_millis(self.max_batch_delay));
+                                self.current_round += 1;
                             }
                             else {
                                 decision = self.make_decision(vote.round).await;
@@ -437,6 +443,56 @@ impl Core {
                                 self.decided_txs.insert(vote.tx.clone(), hp);
                                 self.broadcast_message(PrimaryMessage::Decision((vote.tx.clone(), self.name, decision.decision)), addresses.clone()).await;
                             }
+                        }
+                    }
+                }
+
+                () = &mut timer => {
+                    for ((_, _), tx) in &self.db.db().shared.state.lock().await.expirations {
+                        let block_hash = BlockHash(Digest::try_from(tx.as_bytes()).unwrap());
+                        let mut own_vote = PrimaryVote::new(block_hash.clone(), 0, &self.name, &self.name, &mut self.signature_service, self.current_round + 1, BTreeSet::new(), VoteType::Weak).await;
+                        let mut decision = VoteDecision::new(0, BTreeSet::new(), VoteType::Weak, false);
+                        let mut next_round_tally = Tally::new(BTreeSet::new(), false, 0, 0, 0, 0);
+                        let mut new_tally = Tally::new(BTreeSet::new(), false, 0, 0, 0, 0);
+                        match self.votes.get(&self.current_round) {
+                            Some(tally) => new_tally = tally.clone(),
+                            None => (),
+                        }
+                        if !next_round_tally.voted && new_tally.votes.len() >= 3 {
+                            if self.decided_txs.contains_key(&block_hash.clone()) {
+                                match self.decided_txs.get(&block_hash.clone()).unwrap().get(&self.name) {
+                                    Some(d) => {
+                                        decision.decided = true;
+                                        decision.decision = *d;
+                                        decision.decision_type = VoteType::Strong;
+                                        decision.proof = self.votes.get(&(self.current_round - 1)).unwrap().votes.clone();
+                                    }
+                                    None => {
+                                        decision = self.make_decision(self.current_round).await;
+                                    }
+                                }
+                            }
+                            else {
+                                decision = self.make_decision(self.current_round).await;
+                            }
+                            own_vote.decision = decision.decision;
+                            own_vote.proof = decision.proof;
+                            own_vote.vote_type = decision.decision_type;
+                            self.broadcast_message(PrimaryMessage::Vote(own_vote.clone()), addresses.clone()).await;
+                            next_round_tally = self.tally_vote(own_vote.clone()).await;
+                            self.votes.insert(own_vote.round, next_round_tally);
+                            /// Reset timer
+                            timer.as_mut().reset(Instant::now() + Duration::from_millis(self.max_batch_delay));
+                            self.current_round += 1;
+                        }
+                        else {
+                            decision = self.make_decision(self.current_round).await;
+                        }
+                        if decision.decided {
+                            let mut hp = HashMap::new();
+                            hp.insert(self.name, decision.decision);
+                            self.decided_txs.insert(block_hash.clone(), hp);
+                            self.broadcast_message(PrimaryMessage::Decision((block_hash.clone(), self.name, decision.decision)), addresses.clone()).await;
                         }
                     }
                 }
