@@ -67,7 +67,7 @@ pub struct Shared {
 pub struct State {
     /// The key-value data. We are not trying to do anything fancy so a
     /// `std::collections::HashMap` works fine.
-    entries: HashMap<String, Entry>,
+    entries: HashMap<BlockHash, Entry>,
 
     /// The pub/sub key-space. Redis uses a **separate** key space for key-value
     /// and pub/sub. `mini-redis` handles this by using a separate `HashMap`.
@@ -83,7 +83,7 @@ pub struct State {
     /// created for the same instant. Because of this, the `Instant` is
     /// insufficient for the key. A unique expiration identifier (`u64`) is used
     /// to break these ties.
-    pub expirations: BTreeMap<(Instant, u64), (String, usize)>,
+    pub expirations: BTreeMap<(Instant, u64), (BlockHash, usize)>,
 
     /// Identifier to use for the next expiration. Each expiration is associated
     /// with a unique identifier. See above for why.
@@ -126,7 +126,7 @@ impl DbDropGuard {
 impl Drop for DbDropGuard {
     fn drop(&mut self) {
         // Signal the 'Db' instance to shut down the task that purges expired keys
-        //self.db.shutdown_purge_task();
+        self.db.shutdown_purge_task();
     }
 }
 
@@ -169,7 +169,7 @@ impl Db {
     /// Duration.
     ///
     /// If a value is already associated with the key, it is removed.
-    pub(crate) async fn set(&self, key: String, value: usize, expire: Option<Duration>) {
+    pub(crate) async fn set(&self, key: BlockHash, value: usize, expire: Option<Duration>) {
         let mut state = self.shared.state.lock().await;
 
         // Get and increment the next insertion ID. Guarded by the lock, this
@@ -281,14 +281,14 @@ impl Db {
             // If there is no entry for the channel key, then there are no
             // subscribers. In this case, return `0`.
             .unwrap_or(0)
-    }
+    }*/
 
     /// Signals the purge background task to shut down. This is called by the
     /// `DbShutdown`s `Drop` implementation.
-    fn shutdown_purge_task(&self) {
+    async fn shutdown_purge_task(&self) {
         // The background task must be signaled to shut down. This is done by
         // setting `State::shutdown` to `true` and signalling the task.
-        let mut state = self.shared.state.lock().unwrap();
+        let mut state = self.shared.state.lock().await;
         state.shutdown = true;
 
         // Drop the lock before signalling the background task. This helps
@@ -296,7 +296,7 @@ impl Db {
         // wake up only to be unable to acquire the mutex.
         drop(state);
         self.shared.background_task.notify_one();
-    }*/
+    }
 }
 
 impl Shared {
@@ -332,7 +332,6 @@ impl Shared {
             state.entries.remove(&key.0);
             //state.expirations.remove(&(when, id));
         }
-
         None
     }
 
