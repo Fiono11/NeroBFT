@@ -216,6 +216,16 @@ impl Core {
 
     async fn make_decision(&self, round: usize) -> VoteDecision {
         let mut decision = VoteDecision::new(0, BTreeSet::new(), VoteType::Weak, false);
+        match self.decided_txs.get(&self.current_tx) {
+            Some(a) => {
+                decision.decision = *a.get(&self.name).unwrap();
+                // proof of decision missing
+                decision.decision_type = VoteType::Strong;
+                decision.decided = true;
+                return decision;
+            }
+            None => ()
+        }
         match self.votes.get(&round) {
             Some(tally) => {
                 decision.proof = self.votes.get(&round).unwrap().votes.clone();
@@ -336,12 +346,24 @@ impl Core {
             tokio::select! {
                 Some(decision) = self.rx_decisions.recv() => {
                     info!("Received a decision: {:#?}", decision);
-                    let mut hp = HashMap::new();
-                    hp.insert(decision.1, decision.2);
-                    self.decided_txs.insert(decision.0, hp);
-                    if self.decided_txs.len() >= 3 {
+                    match self.decided_txs.get(&decision.0.clone()) {
+                        Some(a) => {
+                            let mut hp = a.clone();
+                            hp.insert(decision.1, decision.2);
+                            self.decided_txs.insert(decision.0.clone(), hp);
+                        }
+                        None => {
+                            let mut hp = HashMap::new();
+                            hp.insert(decision.1, decision.2);
+                            self.decided_txs.insert(decision.0.clone(), hp);
+                        }
+                    }
+                    info!("Decisions: {:?}", self.decided_txs.clone());
+                    if self.decided_txs.get(&decision.0).unwrap().len() >= 3 {
                         let decisions = self.decided_txs.get(&self.current_tx).unwrap();
-                        for i in 1..decisions.len() {
+                        for i in 1..decisions.len() - 1 {
+                            info!("decision1: {:?}", decisions.get(&public_keys[0]));
+                            info!("decision2: {:?}", decisions.get(&public_keys[i]));
                             assert_eq!(decisions.get(&public_keys[0]), decisions.get(&public_keys[i]));
                         }
                         info!("CONSENSUS ACHIEVED!!!");
@@ -365,9 +387,18 @@ impl Core {
                                 new_tally = tally.clone();
                                 let decision = self.make_decision(first_own_vote.round).await;
                                 if decision.decided {
-                                    let mut hp = HashMap::new();
-                                    hp.insert(self.name, decision.decision);
-                                    self.decided_txs.insert(first_own_vote.tx.clone(), hp);
+                                    match self.decided_txs.get(&first_own_vote.tx.clone()) {
+                                        Some(a) => {
+                                            let mut hp = a.clone();
+                                            hp.insert(self.name, decision.decision);
+                                            self.decided_txs.insert(first_own_vote.tx.clone(), hp);
+                                        }
+                                        None => {
+                                            let mut hp = HashMap::new();
+                                            hp.insert(self.name, decision.decision);
+                                            self.decided_txs.insert(first_own_vote.tx.clone(), hp);
+                                        }
+                                    }
                                     self.broadcast_message(PrimaryMessage::Decision((first_own_vote.tx.clone(), self.name, decision.decision)), addresses.clone(), first_own_vote.round).await;
                                 }
                             }
@@ -399,7 +430,14 @@ impl Core {
 
                 Some(vote) = self.rx_votes.recv() => {
                     info!("Received a vote: {:#?}", vote);
-                    if self.byzantine_node && self.decided_txs.len() <= 2 {
+                    let mut len = 0;
+                    match self.decided_txs.get(&self.current_tx.clone()) {
+                        Some(a) => {
+                            len = a.len();
+                        }
+                        None => ()
+                    }
+                    if self.byzantine_node && len <= 2 {
                         for address in &addresses {
                             let random_decision = rand::thread_rng().gen_range(0..2);
                             // valid proof
@@ -408,7 +446,7 @@ impl Core {
                         }
                     }
                     if !self.byzantine_node {
-                        if self.decided_txs.len() <= 2 {
+                        if len <= 2 {
                             let mut is_signature_valid = false;
                             let mut is_proof_valid = false;
                             let mut own_vote = PrimaryVote::new(vote.tx.clone(), 0, &self.name, &self.name, &mut self.signature_service, self.current_round + 1, BTreeSet::new(), VoteType::Weak).await;
@@ -447,6 +485,10 @@ impl Core {
                             if is_signature_valid && is_proof_valid {
                                 new_tally = self.tally_vote(vote.clone()).await;
                                 self.votes.insert(vote.round, new_tally.clone());
+                            match self.votes.get(&(self.current_round + 1)) {
+                                Some(tally) => next_round_tally = tally.clone(),
+                                None => (),
+                            }
                                 if !next_round_tally.voted && new_tally.votes.len() == 4 || (self.rounds_expired.contains(&self.current_round) && !next_round_tally.voted && new_tally.votes.len() >= 3) {
                                     if self.decided_txs.contains_key(&vote.tx.clone()) {
                                         match self.decided_txs.get(&vote.tx.clone()).unwrap().get(&self.name) {
@@ -480,31 +522,45 @@ impl Core {
                                     decision = self.make_decision(vote.round).await;
                                 }
                                 if decision.decided {
-                                    let mut hp = HashMap::new();
-                                    hp.insert(self.name, decision.decision);
-                                    self.decided_txs.insert(vote.tx.clone(), hp);
+                                    match self.decided_txs.get(&vote.tx.clone()) {
+                                        Some(a) => {
+                                            let mut hp = a.clone();
+                                            hp.insert(self.name, decision.decision);
+                                            self.decided_txs.insert(vote.tx.clone(), hp);
+                                        }
+                                        None => {
+                                            let mut hp = HashMap::new();
+                                            hp.insert(self.name, decision.decision);
+                                            self.decided_txs.insert(vote.tx.clone(), hp);
+                                        }
+                                    }
                                     self.broadcast_message(PrimaryMessage::Decision((vote.tx.clone(), self.name, decision.decision)), addresses.clone(), vote.round).await;
                                     let decisions = self.decided_txs.get(&self.current_tx).unwrap();
-                                    for i in 1..decisions.len() {
-                                        assert_eq!(decisions.get(&public_keys[0]), decisions.get(&public_keys[i]));
+                                    info!("Decisions: {:?}", decisions.clone());
+                                    if decisions.len() == 3 {
+                                        for i in 1..decisions.len() - 1 {
+                                            info!("decision1: {:?}", decisions.get(&public_keys[0]));
+                                            info!("decision2: {:?}", decisions.get(&public_keys[i]));
+                                            assert_eq!(decisions.get(&public_keys[0]), decisions.get(&public_keys[i]));
+                                        }
+                                        info!("CONSENSUS ACHIEVED!!!");
                                     }
-                                    info!("CONSENSUS ACHIEVED!!!");
                                 }
                             }
-                        }
-                        else {
-                            let decisions = self.decided_txs.get(&self.current_tx).unwrap();
-                            for i in 1..decisions.len() {
-                                assert_eq!(decisions.get(&public_keys[0]), decisions.get(&public_keys[i]));
-                            }
-                            info!("CONSENSUS ACHIEVED!!!");
                         }
                     }
                 }
 
                 () = &mut timer => {
                     // byzantine
-                    if self.decided_txs.len() <= 2 {
+                    let mut len = 0;
+                    match self.decided_txs.get(&self.current_tx.clone()) {
+                        Some(a) => {
+                            len = a.len();
+                        }
+                        None => ()
+                    }
+                    if len <= 2 {
                         if !self.rounds_expired.contains(&self.current_round) {
                         info!("Election expired in round {}", self.current_round);
                         self.rounds_expired.insert(self.current_round);
@@ -518,6 +574,10 @@ impl Core {
                         let mut new_tally = Tally::new(BTreeSet::new(), false, 0, 0, 0, 0);
                         match self.votes.get(&self.current_round) {
                             Some(tally) => new_tally = tally.clone(),
+                            None => (),
+                        }
+                            match self.votes.get(&(self.current_round + 1)) {
+                            Some(tally) => next_round_tally = tally.clone(),
                             None => (),
                         }
                         info!("Tally in round {}: {:?}", self.current_round, new_tally.clone());
@@ -554,26 +614,34 @@ impl Core {
                             decision = self.make_decision(self.current_round).await;
                         }
                         if decision.decided {
-                            let mut hp = HashMap::new();
-                            hp.insert(self.name, decision.decision);
-                            self.decided_txs.insert(block_hash.clone(), hp);
+                                match self.decided_txs.get(&block_hash.clone()) {
+                                        Some(a) => {
+                                            let mut hp = a.clone();
+                                            hp.insert(self.name, decision.decision);
+                                            self.decided_txs.insert(block_hash.clone(), hp);
+                                        }
+                                        None => {
+                                            let mut hp = HashMap::new();
+                                            hp.insert(self.name, decision.decision);
+                                            self.decided_txs.insert(block_hash.clone(), hp);
+                                        }
+                                    }
                             self.broadcast_message(PrimaryMessage::Decision((block_hash.clone(), self.name, decision.decision)), addresses.clone(), self.current_round).await;
                             let decisions = self.decided_txs.get(&self.current_tx).unwrap();
-                            for i in 1..decisions.len() {
+                                info!("Decisions: {:?}", decisions.clone());
+                                if decisions.len() == 3 {
+                                    for i in 1..decisions.len() - 1 {
+                                        info!("decision1: {:?}", decisions.get(&public_keys[0]));
+                                            info!("decision2: {:?}", decisions.get(&public_keys[i]));
                                 assert_eq!(decisions.get(&public_keys[0]), decisions.get(&public_keys[i]));
                             }
                             info!("CONSENSUS ACHIEVED!!!");
                             }
+                                }
+
                     //}
                     }
                         }
-                    else {
-                        let decisions = self.decided_txs.get(&self.current_tx).unwrap();
-                        for i in 1..decisions.len() {
-                            assert_eq!(decisions.get(&public_keys[0]), decisions.get(&public_keys[i]));
-                        }
-                        info!("CONSENSUS ACHIEVED!!!");
-                    }
                 }
             };
 
