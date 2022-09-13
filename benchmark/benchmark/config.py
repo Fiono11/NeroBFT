@@ -53,17 +53,33 @@ class Committee:
 
         port = base_port
         self.json = {'authorities': OrderedDict()}
-        for name, hosts in addresses.items():
-            host = hosts.pop(0)
-            primary_addr = {
-                'transactions': f'{host}:{port + 1}'
-            }
-            port += 2
+        #for name, hosts in addresses.items():
+            #host = hosts.pop(0)
+            #primary_addr = {
+                #'transactions': f'{host}:{port + 1}'
+            #}
+            #port += 2
 
-            self.json['authorities'][name] = {
-                'stake': 1,
-                'primary': primary_addr,
+        host = '127.0.0.1'
+        number_of_nodes = len(addresses)
+        number_of_byzantine_nodes = (number_of_nodes - 1) / 3;
+        number_of_honest_nodes = number_of_nodes - number_of_byzantine_nodes
+        for i, address in enumerate(addresses):
+            primary_addr = {
+                'transactions': f'{host}:{port + i}'
             }
+            if i < number_of_honest_nodes:
+                self.json['authorities'][address] = {
+                    'stake': 1,
+                    'primary': primary_addr,
+                    'byzantine': False
+                }
+            else:
+                self.json['authorities'][address] = {
+                    'stake': 1,
+                    'primary': primary_addr,
+                    'byzantine': True
+                }
 
     def primary_addresses(self, faults=0):
         ''' Returns an ordered list of primaries' addresses. '''

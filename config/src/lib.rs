@@ -92,13 +92,15 @@ pub struct Authority {
     pub stake: Stake,
     /// The network addresses of the primary.
     pub primary: PrimaryAddresses,
+    pub byzantine: bool,
 }
 
 impl Authority {
-    pub fn new(stake: Stake, primary: PrimaryAddresses) -> Self {
+    pub fn new(stake: Stake, primary: PrimaryAddresses, byzantine: bool) -> Self {
         Self {
             stake,
             primary,
+            byzantine,
         }
     }
 }
@@ -175,7 +177,7 @@ impl Committee {
     pub fn others_primaries(&self, myself: &PublicKey) -> Vec<(PublicKey, PrimaryAddresses)> {
         self.authorities
             .iter()
-            .filter(|(name, _)| name != &myself)
+            .filter(|(name, authority)| name != &myself && authority.byzantine == false)
             .map(|(name, authority)| (*name, authority.primary.clone()))
             .collect()
     }

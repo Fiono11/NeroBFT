@@ -218,7 +218,10 @@ impl Core {
         let mut decision = VoteDecision::new(0, BTreeSet::new(), VoteType::Weak, false);
         match self.decided_txs.get(&self.current_tx) {
             Some(a) => {
-                decision.decision = *a.get(&self.name).unwrap();
+                match a.get(&self.name) {
+                    Some(d) => decision.decision = *d,
+                    None => ()
+                }
                 // proof of decision missing
                 decision.decision_type = VoteType::Strong;
                 decision.decided = true;
@@ -360,11 +363,10 @@ impl Core {
                     }
                     info!("Decisions: {:?}", self.decided_txs.clone());
                     if self.decided_txs.get(&decision.0).unwrap().len() >= 3 {
+                        info!("public keys: {:?}", &public_keys);
                         let decisions = self.decided_txs.get(&self.current_tx).unwrap();
-                        for i in 1..decisions.len() - 1 {
-                            info!("decision1: {:?}", decisions.get(&public_keys[0]));
-                            info!("decision2: {:?}", decisions.get(&public_keys[i]));
-                            assert_eq!(decisions.get(&public_keys[0]), decisions.get(&public_keys[i]));
+                        for i in 0..decisions.len() - 1 {
+                            assert_eq!(decisions.get(&self.name), decisions.get(&public_keys[i]));
                         }
                         info!("CONSENSUS ACHIEVED!!!");
                     }
@@ -437,7 +439,7 @@ impl Core {
                         }
                         None => ()
                     }
-                    if self.byzantine_node && len <= 2 {
+                    if self.byzantine_node && len <= 3 {
                         for address in &addresses {
                             let random_decision = rand::thread_rng().gen_range(0..2);
                             // valid proof
@@ -538,10 +540,9 @@ impl Core {
                                     let decisions = self.decided_txs.get(&self.current_tx).unwrap();
                                     info!("Decisions: {:?}", decisions.clone());
                                     if decisions.len() == 3 {
-                                        for i in 1..decisions.len() - 1 {
-                                            info!("decision1: {:?}", decisions.get(&public_keys[0]));
-                                            info!("decision2: {:?}", decisions.get(&public_keys[i]));
-                                            assert_eq!(decisions.get(&public_keys[0]), decisions.get(&public_keys[i]));
+                                        info!("public keys: {:?}", &public_keys);
+                                        for i in 0..decisions.len() - 1 {
+                                            assert_eq!(decisions.get(&self.name), decisions.get(&public_keys[i]));
                                         }
                                         info!("CONSENSUS ACHIEVED!!!");
                                     }
@@ -560,7 +561,7 @@ impl Core {
                         }
                         None => ()
                     }
-                    if len <= 2 {
+                    if len <= 3 {
                         if !self.rounds_expired.contains(&self.current_round) {
                         info!("Election expired in round {}", self.current_round);
                         self.rounds_expired.insert(self.current_round);
@@ -630,10 +631,9 @@ impl Core {
                             let decisions = self.decided_txs.get(&self.current_tx).unwrap();
                                 info!("Decisions: {:?}", decisions.clone());
                                 if decisions.len() == 3 {
-                                    for i in 1..decisions.len() - 1 {
-                                        info!("decision1: {:?}", decisions.get(&public_keys[0]));
-                                            info!("decision2: {:?}", decisions.get(&public_keys[i]));
-                                assert_eq!(decisions.get(&public_keys[0]), decisions.get(&public_keys[i]));
+                                    info!("public keys: {:?}", &public_keys);
+                                    for i in 0..decisions.len() - 1 {
+                                assert_eq!(decisions.get(&self.name), decisions.get(&public_keys[i]));
                             }
                             info!("CONSENSUS ACHIEVED!!!");
                             }
