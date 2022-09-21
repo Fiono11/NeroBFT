@@ -1,16 +1,40 @@
 use config::Committee;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
+use std::thread;
 //use std::sync::{Arc, Mutex};
 use tokio::time::{self, Duration, Instant};
 use tokio::sync::{broadcast, Notify, Mutex};
-use crate::{BlockHash, Transaction};
+use crate::{BlockHash, PrimaryVote, Transaction};
 use bytes::Bytes;
 use log::debug;
+use crypto::Digest;
 use crate::core::Tally;
+use crate::error::DagError::InvalidSignature;
 use crate::messages::ParentHash;
 
-pub type Election = HashMap<ParentHash, (Committee, BlockHash)>;
+#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
+pub struct Election {
+    votes: BTreeSet<PrimaryVote>,
+    voted: bool,
+    weak_zeros: usize,
+    weak_ones: usize,
+    strong_zeros: usize,
+    strong_ones: usize,
+}
+
+impl Election {
+    pub fn new() -> Self {
+        Election {
+            votes: BTreeSet::new(),
+            voted: false,
+            weak_zeros: 0,
+            weak_ones: 0,
+            strong_zeros: 0,
+            strong_ones: 0,
+        }
+    }
+}
 
 /// A wrapper around a `Db` instance. This exists to allow orderly cleanup
 /// of the `Db` by signalling the background purge task to shut down when
@@ -83,7 +107,7 @@ pub struct State {
     /// created for the same instant. Because of this, the `Instant` is
     /// insufficient for the key. A unique expiration identifier (`u64`) is used
     /// to break these ties.
-    pub expirations: BTreeMap<(Instant, u64), (BlockHash, usize)>,
+    pub expirations: HashMap<(Instant, u64), (BlockHash, Election)>,
 
     /// Identifier to use for the next expiration. Each expiration is associated
     /// with a unique identifier. See above for why.
@@ -102,7 +126,7 @@ struct Entry {
     id: u64,
 
     /// Stored data
-    data: usize,
+    data: Election,
 
     /// Instant at which the entry expires and should be removed from the
     /// database.
@@ -138,7 +162,7 @@ impl Db {
             state: Mutex::new(State {
                 entries: HashMap::new(),
                 pub_sub: HashMap::new(),
-                expirations: BTreeMap::new(),
+                expirations: HashMap::new(),
                 next_id: 0,
                 shutdown: false,
             }),
@@ -151,26 +175,32 @@ impl Db {
         Db { shared }
     }
 
-    /*/// Get the value associated with a key.
+    /// Get the value associated with a key.
     ///
     /// Returns `None` if there is no value associated with the key. This may be
     /// due to never having assigned a value to the key or a previously assigned
     /// value expired.
-    pub(crate) async fn get(&self, key: &str) -> Option<Election> {
+    pub(crate) async fn get(&self, key: &BlockHash) -> Option<Election> {
         // Acquire the lock, get the entry and clone the value.
         //
         // Because data is stored using `Bytes`, a clone here is a shallow
         // clone. Data is not copied.
         let state = self.shared.state.lock().await;
         state.entries.get(key).map(|entry| entry.data.clone())
-    }*/
+    }
 
     /// Set the value associated with a key along with an optional expiration
     /// Duration.
     ///
     /// If a value is already associated with the key, it is removed.
-    pub(crate) async fn set(&self, key: BlockHash, value: usize, expire: Option<Duration>) {
+    pub(crate) async fn set(&self, key: BlockHash, value: Election, expire: Option<Duration>) {
         let mut state = self.shared.state.lock().await;
+        let entry = Entry {
+            id: 0,
+            data: Election::new(),
+            expires_at: None,
+        };
+        state.entries.insert(BlockHash(Digest::default()), entry);
 
         // Get and increment the next insertion ID. Guarded by the lock, this
         // ensures a unique identifier is associated with each `set` operation.
@@ -198,11 +228,13 @@ impl Db {
 
             // Track the expiration.
             state.expirations.insert((when, id), (key.clone(), value.clone()));
+            //state.expirations.insert(when, Election::new());
+            //drop(state);
             when
         });
 
         // Insert the entry into the `HashMap`.
-        let prev = state.entries.insert(
+        /*let prev = state.entries.insert(
             key,
             Entry {
                 id,
@@ -230,7 +262,7 @@ impl Db {
             // Finally, only notify the background task if it needs to update
             // its state to reflect a new expiration.
             self.shared.background_task.notify_one();
-        }
+        }*/
     }
 
     /*/// Returns a `Receiver` for the requested channel.
@@ -321,7 +353,10 @@ impl Shared {
         // Find all keys scheduled to expire **before** now.
         let now = Instant::now();
 
-        while let Some((&(when, id), key)) = state.expirations.iter().next() {
+        println!("{:?}", state.expirations);
+
+        //while let Some((&(when, id), key)) = state.expirations.iter().next() {
+        for (&(when, id), key) in state.expirations.iter() {
             if when > now {
                 // Done purging, `when` is the instant at which the next key
                 // expires. The worker task will wait until this instant.
@@ -369,8 +404,14 @@ async fn purge_expired_tasks(shared: Arc<Shared>) {
             // state as new keys have been set to expire early. This is done by
             // looping.
             tokio::select! {
-                _ = time::sleep_until(when) => {}
-                _ = shared.background_task.notified() => {}
+                _ = time::sleep_until(when) => {
+                    println!("{:?}", Instant::now());
+                    println!("A");
+                }
+                _ = shared.background_task.notified() => {
+                    println!("{:?}", Instant::now());
+                    println!("B");
+                }
             }
         } else {
             // There are no keys expiring in the future. Wait until the task is
@@ -392,35 +433,55 @@ async fn purge_expired_tasks(shared: Arc<Shared>) {
 /// to advance to the application.
 #[tokio::test]
 async fn key_value_timeout() {
-    tokio::time::pause();
-
+    println!("{:?}", Instant::now());
+    time::pause();
+    time::advance(Duration::from_millis(1000)).await;
+    time::resume();
+    println!("{:?}", Instant::now());
     let db_holder = DbDropGuard::new();
 
-    db_holder.db.set("a".to_string(), Election::new(), Some(Duration::from_secs(2)));
+    let block_hash = BlockHash(Digest::default());
+
+    let election = Election::new();
+
+    //let handler = thread::spawn(move || {
+        // thread code
+        db_holder.db.set(block_hash.clone(), election.clone(), Some(Duration::from_secs(1))).await;
+    //});
+
+    //handler.join().unwrap();
+
+    println!("{:?}", Instant::now());
+
+    //println!("{:?}", db_holder.db);
 
     let now = Instant::now();
 
-    let mut response = db_holder.db.get("a").unwrap();
+    //let mut response = db_holder.db.get(&block_hash).await.unwrap();
 
-    let insert_at = response.insert_at;
+    //let insert_at = response.insert_at;
 
-    assert_eq!(&Election::new(), &response);
+    //assert_eq!(&election, &response);
 
-    let mut tally = Tally::from(0, BTreeSet::new());
+    //let mut tally = Tally::from(0, BTreeSet::new());
 
-    time::sleep(Duration::from_secs(1)).await;
+    time::pause();
+    time::advance(Duration::from_millis(2000)).await;
+    time::resume();
 
-    let time = Instant::now().elapsed().as_secs();
+    //let time = Instant::now().elapsed().as_secs();
 
-    db_holder.db.set("a".to_string(), Election::from(tally.clone(), time, None), Some(Duration::from_secs(Instant::now().elapsed().as_secs())));
+    //db_holder.db.set("a".to_string(), Entry::from(tally.clone(), time, None), Some(Duration::from_secs(Instant::now().elapsed().as_secs())));
 
-    let mut new_response = db_holder.db.get("a").unwrap();
+    //let mut new_response = db_holder.db.get("a").unwrap();
 
-    assert_eq!(&Election::from(tally, time, None), &new_response);
+    //assert_eq!(&Election::from(tally, time, None), &new_response);
 
     // Wait for the key to expire
-    time::sleep(Duration::from_secs(1)).await;
+    //time::sleep(Duration::from_secs(1)).await;
 
-    assert_eq!(true, db_holder.db.get("a").is_none());
+    println!("{:?}", db_holder.db);
+
+    assert_eq!(true, db_holder.db.get(&block_hash).await.is_none());
 }
 

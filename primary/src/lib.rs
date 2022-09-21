@@ -1,4 +1,5 @@
 #![feature(map_first_last)]
+#![allow(warnings)]
 
 mod core;
 mod primary;

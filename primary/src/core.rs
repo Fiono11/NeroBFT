@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::{Instant, sleep};
 use network::{CancelHandler, ReliableSender, SimpleSender};
-use crate::elections::{DbDropGuard, Election};
+//use crate::elections::{DbDropGuard, Election};
 use crate::messages::{Batch, PrimaryMessage, VoteType};
 use config::Authority;
 use crate::messages::PrimaryVote;
@@ -24,6 +24,7 @@ use async_recursion::async_recursion;
 //use serde::__private::de::Content::String;
 use serde::__private::de::TagOrContentField::Tag;
 use std::string::String;
+use crate::elections::DbDropGuard;
 
 //#[cfg(test)]
 //#[path = "tests/batch_maker_tests.rs"]
@@ -51,8 +52,8 @@ pub struct Core {
     current_batch_size: usize,
     /// A network sender to broadcast the batches to the other workers.
     network: ReliableSender,
-    /// Election container
-    elections: Election,
+    // Election container
+    //elections: Election,
     /// Decided txs
     decided_txs: HashMap<BlockHash, HashMap<PublicKey, usize>>,
     /// Network delay
@@ -130,7 +131,7 @@ impl Core {
                 current_batch: Batch::with_capacity(batch_size * 2),
                 current_batch_size: 0,
                 network: ReliableSender::new(),
-                elections: HashMap::new(),
+                //elections: HashMap::new(),
                 decided_txs: HashMap::new(),
                 network_delay: 200,
                 counter: 0,
@@ -144,12 +145,12 @@ impl Core {
                 current_tx: BlockHash(Digest([0 as u8; 32])),
                 rounds_expired: BTreeSet::new(),
             }
-            .run()
-            .await;
+            //.run()
+            //.await;
         });
     }
 
-    /// Broadcast message
+    /*/// Broadcast message
     async fn broadcast_message(&mut self, message: PrimaryMessage, addresses: Vec<SocketAddr>, round: usize) {
         let serialized = bincode::serialize(&message).expect("Failed to serialize our own vote");
         let bytes = Bytes::from(serialized.clone());
@@ -648,7 +649,7 @@ impl Core {
             // Give the change to schedule other tasks.
             tokio::task::yield_now().await;
         }
-    }
+    }*/
 }
 
 pub fn now() -> u64 {
