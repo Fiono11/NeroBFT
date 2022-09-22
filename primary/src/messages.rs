@@ -103,7 +103,8 @@ pub struct PrimaryVote {
 #[derive(Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq, Debug)]
 pub enum VoteType {
     Weak,
-    Strong
+    Strong,
+    Justify,
 }
 
 impl PrimaryVote {
@@ -182,7 +183,6 @@ impl fmt::Debug for PrimaryVote {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum PrimaryMessage {
     Vote(PrimaryVote),
-    //StrongVote(Vote),
     Transactions(Vec<Transaction>),
     Decision((BlockHash, PublicKey, usize))
 }

@@ -13,29 +13,6 @@ use crate::core::Tally;
 use crate::error::DagError::InvalidSignature;
 use crate::messages::ParentHash;
 
-#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
-pub struct Election {
-    votes: BTreeSet<PrimaryVote>,
-    voted: bool,
-    weak_zeros: usize,
-    weak_ones: usize,
-    strong_zeros: usize,
-    strong_ones: usize,
-}
-
-impl Election {
-    pub fn new() -> Self {
-        Election {
-            votes: BTreeSet::new(),
-            voted: false,
-            weak_zeros: 0,
-            weak_ones: 0,
-            strong_zeros: 0,
-            strong_ones: 0,
-        }
-    }
-}
-
 /// A wrapper around a `Db` instance. This exists to allow orderly cleanup
 /// of the `Db` by signalling the background purge task to shut down when
 /// this struct is dropped.
@@ -107,7 +84,7 @@ pub struct State {
     /// created for the same instant. Because of this, the `Instant` is
     /// insufficient for the key. A unique expiration identifier (`u64`) is used
     /// to break these ties.
-    pub expirations: HashMap<(Instant, u64), (BlockHash, Election)>,
+    pub expirations: HashMap<(Instant, u64), (BlockHash, u64)>,
 
     /// Identifier to use for the next expiration. Each expiration is associated
     /// with a unique identifier. See above for why.
@@ -126,7 +103,7 @@ struct Entry {
     id: u64,
 
     /// Stored data
-    data: Election,
+    data: u64,
 
     /// Instant at which the entry expires and should be removed from the
     /// database.
@@ -180,7 +157,7 @@ impl Db {
     /// Returns `None` if there is no value associated with the key. This may be
     /// due to never having assigned a value to the key or a previously assigned
     /// value expired.
-    pub(crate) async fn get(&self, key: &BlockHash) -> Option<Election> {
+    pub(crate) async fn get(&self, key: &BlockHash) -> Option<u64> {
         // Acquire the lock, get the entry and clone the value.
         //
         // Because data is stored using `Bytes`, a clone here is a shallow
@@ -193,14 +170,8 @@ impl Db {
     /// Duration.
     ///
     /// If a value is already associated with the key, it is removed.
-    pub(crate) async fn set(&self, key: BlockHash, value: Election, expire: Option<Duration>) {
+    pub(crate) async fn set(&self, key: BlockHash, value: u64, expire: Option<Duration>) {
         let mut state = self.shared.state.lock().await;
-        let entry = Entry {
-            id: 0,
-            data: Election::new(),
-            expires_at: None,
-        };
-        state.entries.insert(BlockHash(Digest::default()), entry);
 
         // Get and increment the next insertion ID. Guarded by the lock, this
         // ensures a unique identifier is associated with each `set` operation.
@@ -234,7 +205,7 @@ impl Db {
         });
 
         // Insert the entry into the `HashMap`.
-        /*let prev = state.entries.insert(
+        let prev = state.entries.insert(
             key,
             Entry {
                 id,
@@ -262,7 +233,7 @@ impl Db {
             // Finally, only notify the background task if it needs to update
             // its state to reflect a new expiration.
             self.shared.background_task.notify_one();
-        }*/
+        }
     }
 
     /*/// Returns a `Receiver` for the requested channel.
@@ -442,11 +413,9 @@ async fn key_value_timeout() {
 
     let block_hash = BlockHash(Digest::default());
 
-    let election = Election::new();
-
     //let handler = thread::spawn(move || {
         // thread code
-        db_holder.db.set(block_hash.clone(), election.clone(), Some(Duration::from_secs(1))).await;
+        db_holder.db.set(block_hash.clone(), 0, Some(Duration::from_secs(1))).await;
     //});
 
     //handler.join().unwrap();

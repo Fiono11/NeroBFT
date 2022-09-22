@@ -17,7 +17,7 @@ use crate::messages::PrimaryVote;
 use crypto::Digest;
 use std::convert::TryFrom;
 use rand::{Rng, thread_rng};
-use crate::messages::VoteType::{Strong, Weak};
+use crate::messages::VoteType::{Justify, Strong, Weak};
 use crypto::Hash;
 use crate::PrimaryMessage::{Decision, Vote};
 use async_recursion::async_recursion;
@@ -145,12 +145,12 @@ impl Core {
                 current_tx: BlockHash(Digest([0 as u8; 32])),
                 rounds_expired: BTreeSet::new(),
             }
-            //.run()
-            //.await;
+            .run()
+            .await;
         });
     }
 
-    /*/// Broadcast message
+    /// Broadcast message
     async fn broadcast_message(&mut self, message: PrimaryMessage, addresses: Vec<SocketAddr>, round: usize) {
         let serialized = bincode::serialize(&message).expect("Failed to serialize our own vote");
         let bytes = Bytes::from(serialized.clone());
@@ -449,9 +449,21 @@ impl Core {
                         }
                     }
                     if !self.byzantine_node {
-                        if len <= 2 {
+                        if vote.vote_type == Justify {
+                            let round = vote.proof.first().unwrap().round;
+                            let tally = self.votes.get(&vote.round).unwrap();
+                            let mut decision = 0;
+                            for v in tally.votes.iter() {
+                                if v.author == self.name {
+                                    decision = v.decision;
+                                }
+                            }
+                            let mut own_vote = PrimaryVote::new(vote.tx.clone(), decision, &self.name, &self.name, &mut self.signature_service, round - 1, tally.votes.clone(), VoteType::Justify).await;
+                            self.broadcast_message(PrimaryMessage::Vote(own_vote.clone()), addresses.clone(), vote.round).await;
+                        }
+                        if len <= 2 && vote.vote_type != Justify {
                             let mut is_signature_valid = false;
-                            let mut is_proof_valid = false;
+                            let mut is_proof_valid = true;
                             let mut own_vote = PrimaryVote::new(vote.tx.clone(), 0, &self.name, &self.name, &mut self.signature_service, self.current_round + 1, BTreeSet::new(), VoteType::Weak).await;
                             let mut decision = VoteDecision::new(0, BTreeSet::new(), VoteType::Weak, false);
                             let mut next_round_tally = Tally::new(BTreeSet::new(), false, 0, 0, 0, 0);
@@ -469,7 +481,9 @@ impl Core {
                                                 }
                                                 Err(e) => info!("Signature of vote {} is not valid!", &vote.digest()),
                                             }
-                                            is_proof_valid = self.validate_proof(vote.clone()).await;
+                                            if vote.vote_type == Justify {
+                                                is_proof_valid = self.validate_proof(vote.clone()).await;
+                                            }
                                         }
                                     }
                                 }
@@ -482,7 +496,9 @@ impl Core {
                                         }
                                         Err(e) => info!("Signature of vote {} is not valid!", &vote.digest()),
                                     }
-                                    is_proof_valid = self.validate_proof(vote.clone()).await;
+                                    if vote.vote_type == Justify {
+                                        is_proof_valid = self.validate_proof(vote.clone()).await;
+                                    }
                                 }
                             }
                             if is_signature_valid && is_proof_valid {
@@ -649,7 +665,7 @@ impl Core {
             // Give the change to schedule other tasks.
             tokio::task::yield_now().await;
         }
-    }*/
+    }
 }
 
 pub fn now() -> u64 {
